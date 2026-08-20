@@ -24,6 +24,11 @@ h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter
 .batchDrop h3 { margin:0 0 7px; font-size:21px; }
 .batchDrop p { margin:0; color:#687788; }
 .batchDrop strong { padding:12px 18px; border-radius:12px; background:#173f67; color:white; white-space:nowrap; }
+.uploadedList { grid-column:1/-1; width:100%; display:grid; gap:8px; padding-top:18px; border-top:1px solid #d7e5f1; }
+.uploadedList div { display:grid; grid-template-columns:105px minmax(0,1fr) auto; align-items:center; gap:12px; padding:9px 12px; border-radius:10px; background:white; }
+.uploadedList span { color:#3978b4; font-size:13px; font-weight:850; }
+.uploadedList p { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#344150; font-size:13px; }
+.uploadedList b { color:#2c7a4b; font-size:12px; }
 .orDivider { display:flex; align-items:center; gap:16px; margin:20px 0 18px; color:#8a97a5; font-size:13px; }
 .orDivider::before,.orDivider::after { content:""; height:1px; flex:1; background:#dbe3eb; }
 .workspace { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
@@ -53,4 +58,4 @@ h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter
 .downloadPanel div { display:flex; gap:10px; flex-wrap:wrap; }
 .downloadPanel a { padding:12px 17px; border-radius:11px; background:#24653e; color:white; text-decoration:none; font-size:14px; font-weight:800; }
 .footnote { margin:14px 0 0; text-align:center; color:var(--muted); font-size:12px; }
-@media(max-width:760px){ .hero,.workspace,.optionsCard{grid-template-columns:1fr}.hero{padding-top:42px}.orderCard{justify-content:flex-start;overflow:auto}.batchDrop label{grid-template-columns:auto 1fr;padding:22px}.batchDrop strong{grid-column:1/-1;text-align:center}.privacyBadge{font-size:0}.privacyBadge::after{content:"비공개";font-size:12px}.shell{width:min(100% - 24px,1040px)} }
+@media(max-width:760px){ .hero,.workspace,.optionsCard{grid-template-columns:1fr}.hero{padding-top:42px}.orderCard{justify-content:flex-start;overflow:auto}.batchDrop label{grid-template-columns:auto 1fr;padding:22px}.batchDrop strong{grid-column:1/-1;text-align:center}.uploadedList div{grid-template-columns:90px minmax(0,1fr)}.uploadedList b{display:none}.privacyBadge{font-size:0}.privacyBadge::after{content:"비공개";font-size:12px}.shell{width:min(100% - 24px,1040px)} }

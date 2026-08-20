@@ -53,6 +53,15 @@ export default function Home() {
   const [dragging, setDragging] = useState(false);
   const [downloads, setDownloads] = useState<Downloads>(null);
   const hasC2 = Boolean(analysis?.c2Groups.length);
+  const uploadedFiles = [
+    ["워크북", workbook], ["리테", rete], ["워크북 정답", workbookAnswer], ["리테 정답", reteAnswer],
+  ] as const;
+
+  function startDownload(url: string, name: string) {
+    const link = document.createElement("a");
+    link.href = url; link.download = name;
+    document.body.appendChild(link); link.click(); link.remove();
+  }
 
   async function acceptBatch(fileList: FileList | File[]) {
     const files = Array.from(fileList);
@@ -164,12 +173,12 @@ export default function Home() {
         : null;
       const [questionBytes, answerBytes] = await Promise.all([questionPromise, answerPromise]);
       const baseName = workbook.name.replace(/\.pdf$/i, "");
-      setDownloads({
-        questionUrl: URL.createObjectURL(new Blob([questionBytes], { type: "application/pdf" })),
-        answerUrl: answerBytes ? URL.createObjectURL(new Blob([answerBytes], { type: "application/pdf" })) : undefined,
-        baseName,
-      });
-      setStatus(answerBytes ? "문제지와 정답지가 완성되었습니다." : "문제지가 완성되었습니다.");
+      const questionUrl = URL.createObjectURL(new Blob([questionBytes], { type: "application/pdf" }));
+      const answerUrl = answerBytes ? URL.createObjectURL(new Blob([answerBytes], { type: "application/pdf" })) : undefined;
+      setDownloads({ questionUrl, answerUrl, baseName });
+      startDownload(questionUrl, `클리닉_${baseName}.pdf`);
+      if (answerUrl) window.setTimeout(() => startDownload(answerUrl, `클리닉_정답_${baseName}.pdf`), 350);
+      setStatus(answerBytes ? "완성된 문제지와 정답지 다운로드를 시작했습니다." : "완성된 문제지 다운로드를 시작했습니다.");
     } catch (reason) { setError(reason instanceof Error ? reason.message : "PDF 생성에 실패했습니다."); setStatus(""); }
     finally { setBusy(false); }
   }
@@ -200,6 +209,9 @@ export default function Home() {
           <div><h3>PDF 4개를 여기에 한 번에 드래그</h3><p>워크북 · 리테 · 워크북 정답 · 리테 정답을 자동으로 구분합니다.</p></div>
           <strong>4개 파일 선택</strong>
           <input type="file" accept="application/pdf" multiple onChange={(event) => event.target.files && void acceptBatch(event.target.files)} />
+          {uploadedFiles.some(([, file]) => file) && <div className="uploadedList">
+            {uploadedFiles.map(([role, file]) => file && <div key={role}><span>{role}</span><p>{file.name}</p><b>완료</b></div>)}
+          </div>}
         </label>
       </section>
       <p className="orDivider"><span>또는 아래에서 각각 선택</span></p>
@@ -231,9 +243,9 @@ export default function Home() {
       </section>
       {status && <div className="notice success">{busy && <i />} {status}</div>}
       {error && <div className="notice error">{error}</div>}
-      <button className="primaryButton" disabled={!workbook || !rete || !analysis || busy} onClick={generate}>{busy ? "처리 중…" : (workbookAnswer && reteAnswer ? "문제지·정답지 만들기" : "클리닉 문제지 만들기")}</button>
+      <button className="primaryButton" disabled={!workbook || !rete || !analysis || busy} onClick={generate}>{busy ? "처리 중…" : (workbookAnswer && reteAnswer ? "클리닉 2개 추출 및 다운로드" : "클리닉 문제지 추출 및 다운로드")}</button>
       {downloads && <div className="downloadPanel">
-        <p>파일이 준비되었습니다.</p>
+        <p>다운로드가 시작되었습니다. 자동으로 내려받지 않으면 아래 버튼을 누르세요.</p>
         <div>
           <a href={downloads.questionUrl} download={`클리닉_${downloads.baseName}.pdf`}>문제지 다운로드</a>
           {downloads.answerUrl && <a href={downloads.answerUrl} download={`클리닉_정답_${downloads.baseName}.pdf`}>정답지 다운로드</a>}
