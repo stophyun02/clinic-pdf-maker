@@ -25,7 +25,8 @@ export default function Home() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [downloads, setDownloads] = useState<Downloads>(null);
-  const sectionCount = useMemo(() => Math.min(analysis?.c1Groups.length ?? 0, analysis?.c2Groups.length ?? 0), [analysis]);
+  const sectionCount = useMemo(() => analysis?.c1Groups.length ?? 0, [analysis]);
+  const hasC2 = Boolean(analysis?.c2Groups.length);
 
   async function chooseWorkbook(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
@@ -35,9 +36,11 @@ export default function Home() {
     setBusy(true); setStatus("워크북 전체 페이지를 분석하고 있습니다…");
     try {
       const result = await analyzeWorkbook(new Uint8Array(await file.arrayBuffer()));
-      if (!result.c1Groups.length || !result.c2Groups.length) throw new Error("C1 문장배열 또는 C2 영작배열 페이지를 찾지 못했습니다.");
+      if (!result.c1Groups.length) throw new Error("C1 문장배열 페이지를 찾지 못했습니다.");
       setAnalysis(result); setSection(1);
-      setStatus(`C1 ${result.c1Groups.flat().length}쪽 · C2 ${result.c2Groups.flat().length}쪽을 찾았습니다.`);
+      setStatus(result.c2Groups.length
+        ? `C1 ${result.c1Groups.flat().length}쪽 · C2 ${result.c2Groups.flat().length}쪽을 찾았습니다.`
+        : `C1 ${result.c1Groups.flat().length}쪽을 찾았습니다. 이 교재에는 C2 영작배열이 없어 문장배열과 리테만 구성합니다.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "워크북 분석에 실패했습니다."); setStatus(""); }
     finally { setBusy(false); }
   }
@@ -56,7 +59,7 @@ export default function Home() {
     setBusy(true); setStatus("워크북 정답지에서 C1/C2 영역을 찾고 있습니다…");
     try {
       const result = await analyzeAnswerWorkbook(new Uint8Array(await file.arrayBuffer()));
-      if (!result.c1Sections.length || !result.c2Sections.length) throw new Error("정답지에서 C1 문장배열 또는 C2 영작배열 정답을 찾지 못했습니다.");
+      if (!result.c1Sections.length) throw new Error("정답지에서 C1 문장배열 정답을 찾지 못했습니다.");
       setAnswerAnalysis(result);
       setStatus(`정답지에서 C1 ${result.c1Sections.length}개 · C2 ${result.c2Sections.length}개 단원을 찾았습니다.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "워크북 정답지 분석에 실패했습니다."); setStatus(""); }
@@ -93,7 +96,7 @@ export default function Home() {
         ? buildClinicAnswerPdf(
             new Uint8Array(await workbookAnswer!.arrayBuffer()),
             new Uint8Array(await reteAnswer!.arrayBuffer()),
-            answerAnalysis!, section, reteRange,
+            answerAnalysis!, section, reteRange, hasC2,
           )
         : null;
       const [questionBytes, answerBytes] = await Promise.all([questionPromise, answerPromise]);
@@ -119,9 +122,9 @@ export default function Home() {
         <div>
           <p className="stepLabel">WORKFLOW 01</p>
           <h2>문제지와 정답지를<br />한 번에 완성합니다.</h2>
-          <p className="heroCopy">문장배열과 영작배열만 골라 리뷰테스트와 합치고, 정답지도 같은 순서로 자동 정리합니다.</p>
+          <p className="heroCopy">문장배열과 영작배열만 골라 리뷰테스트와 합칩니다. 영작배열이 없는 교재는 문장배열과 리테만 자동 구성합니다.</p>
         </div>
-        <div className="orderCard"><span>문장배열</span><b>→</b><span>리뷰테스트</span><b>→</b><span>영작배열</span></div>
+        <div className="orderCard"><span>문장배열</span><b>→</b><span>리뷰테스트</span><b>→</b><span>영작배열(있는 경우)</span></div>
       </section>
       <div className="sectionTitle"><span>문제지</span><p>필수 파일 2개</p></div>
       <section className="workspace">

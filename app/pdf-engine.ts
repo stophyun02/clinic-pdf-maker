@@ -162,7 +162,7 @@ export async function buildClinicPdf(
 ) {
   const c1 = analysis.c1Groups[sectionIndex - 1];
   const c2 = analysis.c2Groups[sectionIndex - 1];
-  if (!c1 || !c2) throw new Error("선택한 단원의 C1/C2 페이지 묶음을 찾을 수 없습니다.");
+  if (!c1) throw new Error("선택한 단원의 C1 문장배열 페이지 묶음을 찾을 수 없습니다.");
   const missing = c1.filter((page) => analysis.pages[page - 1]?.anchorY == null);
   if (missing.length) throw new Error(`하단 문제 위치를 안전하게 찾지 못한 워크북 페이지: ${missing.join(", ")}`);
 
@@ -189,8 +189,10 @@ export async function buildClinicPdf(
   const retePages = parsePageRanges(reteRange, rete.getPageCount());
   const copiedRete = await output.copyPages(rete, retePages.map((page) => page - 1));
   copiedRete.forEach((page) => output.addPage(page));
-  const copiedC2 = await output.copyPages(source, c2.map((page) => page - 1));
-  copiedC2.forEach((page) => output.addPage(page));
+  if (c2) {
+    const copiedC2 = await output.copyPages(source, c2.map((page) => page - 1));
+    copiedC2.forEach((page) => output.addPage(page));
+  }
   return output.save({ useObjectStreams: true });
 }
 
@@ -217,10 +219,12 @@ export async function buildClinicAnswerPdf(
   analysis: AnswerWorkbookAnalysis,
   sectionIndex: number,
   reteRange: string,
+  includeC2 = true,
 ) {
   const c1 = analysis.c1Sections[sectionIndex - 1];
   const c2 = analysis.c2Sections[sectionIndex - 1];
-  if (!c1 || !c2) throw new Error("선택한 단원의 C1/C2 정답 영역을 찾을 수 없습니다.");
+  if (!c1) throw new Error("선택한 단원의 C1 문장배열 정답 영역을 찾을 수 없습니다.");
+  if (includeC2 && !c2) throw new Error("선택한 단원의 C2 영작배열 정답 영역을 찾을 수 없습니다.");
   const workbookAnswer = await PDFDocument.load(workbookAnswerBytes.slice());
   const reteAnswer = await PDFDocument.load(reteAnswerBytes.slice());
   const output = await PDFDocument.create();
@@ -229,6 +233,6 @@ export async function buildClinicAnswerPdf(
   const retePages = parsePageRanges(reteRange, reteAnswer.getPageCount());
   const copiedRete = await output.copyPages(reteAnswer, retePages.map((page) => page - 1));
   copiedRete.forEach((page) => output.addPage(page));
-  await appendAnswerSection(output, workbookAnswer, c2);
+  if (includeC2 && c2) await appendAnswerSection(output, workbookAnswer, c2);
   return output.save({ useObjectStreams: true });
 }
