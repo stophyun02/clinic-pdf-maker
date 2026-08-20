@@ -66,30 +66,32 @@ export default function Home() {
   async function acceptBatch(fileList: FileList | File[]) {
     const files = Array.from(fileList);
     setDragging(false); setError(""); setDownloads(null);
-    if (files.length !== 4) { setError("PDF 4개를 한 번에 선택하세요: 워크북, 리테, 워크북 정답, 리테 정답"); return; }
+    if (files.length < 2 || files.length > 4) { setError("워크북과 리테를 포함해 PDF 2~4개를 선택하세요."); return; }
     if (files.some((file) => !isPdf(file))) { setError("PDF 파일만 올릴 수 있습니다."); return; }
     if (files.some((file) => file.size > 100 * 1024 * 1024)) { setError("각 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
     const { slots, duplicate } = classifyFiles(files);
-    if (duplicate || !slots.workbook || !slots.rete || !slots.workbookAnswer || !slots.reteAnswer) {
-      setError("파일명을 자동 구분하지 못했습니다. 파일명에 ‘리테’와 ‘정답’이 들어 있는지 확인한 뒤 4개를 다시 올려주세요.");
+    if (duplicate || !slots.workbook || !slots.rete) {
+      setError("워크북과 리테를 자동 구분하지 못했습니다. 리테 파일명에 ‘리테’가 들어 있는지 확인한 뒤 다시 올려주세요.");
       return;
     }
     setWorkbook(slots.workbook); setRete(slots.rete);
-    setWorkbookAnswer(slots.workbookAnswer); setReteAnswer(slots.reteAnswer);
+    setWorkbookAnswer(slots.workbookAnswer ?? null); setReteAnswer(slots.reteAnswer ?? null);
     setAnalysis(null); setAnswerAnalysis(null); setBusy(true);
-    setStatus("4개 파일을 구분하고 워크북 구조를 분석하고 있습니다…");
+    setStatus("파일을 구분하고 워크북 구조를 분석하고 있습니다…");
     try {
-      const [questionResult, answerResult] = await Promise.all([
-        analyzeWorkbook(new Uint8Array(await slots.workbook.arrayBuffer())),
-        analyzeAnswerWorkbook(new Uint8Array(await slots.workbookAnswer.arrayBuffer())),
-      ]);
+      const questionResult = await analyzeWorkbook(new Uint8Array(await slots.workbook.arrayBuffer()));
       if (!questionResult.c1Groups.length) throw new Error("워크북에서 C1 문장배열 페이지를 찾지 못했습니다.");
-      if (!answerResult.c1Sections.length) throw new Error("워크북 정답지에서 C1 문장배열 정답을 찾지 못했습니다.");
       const detectedSection = inferSection(slots.rete.name, questionResult.c1Groups.length);
-      setAnalysis(questionResult); setAnswerAnalysis(answerResult);
-      setStatus(questionResult.c2Groups.length
-        ? `${detectedSection}과로 자동 확인했습니다. 문제지·정답지를 바로 만들 수 있습니다.`
-        : `${detectedSection}과로 자동 확인했습니다. C2가 없어 문장배열과 리테로 구성합니다.`);
+      let validAnswerAnalysis: AnswerWorkbookAnalysis | null = null;
+      if (slots.workbookAnswer && slots.reteAnswer) {
+        try {
+          const result = await analyzeAnswerWorkbook(new Uint8Array(await slots.workbookAnswer.arrayBuffer()));
+          if (result.c1Sections.length && (!questionResult.c2Groups.length || result.c2Sections.length)) validAnswerAnalysis = result;
+        } catch { validAnswerAnalysis = null; }
+      }
+      setAnalysis(questionResult); setAnswerAnalysis(validAnswerAnalysis);
+      if (validAnswerAnalysis) setStatus(`${detectedSection}과로 확인했습니다. 클리닉과 정답지를 만들 수 있습니다.`);
+      else setStatus(`${detectedSection}과로 확인했습니다. 정답 자료가 부족해 클리닉 문제지만 생성합니다.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "파일 분석에 실패했습니다."); setStatus(""); }
     finally { setBusy(false); }
   }
@@ -101,11 +103,7 @@ export default function Home() {
 
   async function generate() {
     if (!workbook || !rete || !analysis) return;
-    const wantsAnswer = Boolean(workbookAnswer || reteAnswer);
-    if (wantsAnswer && (!workbookAnswer || !reteAnswer || !answerAnalysis)) {
-      setError("정답지를 만들려면 워크북 정답과 리테 정답 PDF를 모두 선택하세요.");
-      return;
-    }
+    const wantsAnswer = Boolean(workbookAnswer && reteAnswer && answerAnalysis);
     setBusy(true); setError(""); setStatus("클리닉 PDF를 만들고 있습니다…");
     try {
       const section = inferSection(rete.name, analysis.c1Groups.length);
@@ -161,9 +159,9 @@ export default function Home() {
           onDragLeave={() => setDragging(false)}
           onDrop={dropFiles}
         >
-          <span className="dropIcon">4</span>
-          <div><h3>PDF 4개를 여기에 한 번에 드래그</h3><p>워크북 · 리테 · 워크북 정답 · 리테 정답을 자동으로 구분합니다.</p></div>
-          <strong>4개 파일 선택</strong>
+          <span className="dropIcon">2+</span>
+          <div><h3>PDF 2~4개를 여기에 한 번에 드래그</h3><p>워크북 · 리테는 필수이며, 정답 파일이 충분하면 정답지도 함께 만듭니다.</p></div>
+          <strong>PDF 파일 선택</strong>
           <input type="file" accept="application/pdf" multiple onChange={(event) => event.target.files && void acceptBatch(event.target.files)} />
           {uploadedFiles.some(([, file]) => file) && <div className="uploadedList">
             {uploadedFiles.map(([role, file]) => file && <div key={role}><span>{role}</span><p>{file.name}</p><b>완료</b></div>)}
@@ -172,7 +170,7 @@ export default function Home() {
       </section>
       {status && <div className="notice success">{busy && <i />} {status}</div>}
       {error && <div className="notice error">{error}</div>}
-      <button className="primaryButton" disabled={!workbook || !rete || !analysis || busy} onClick={generate}>{busy ? "처리 중…" : (workbookAnswer && reteAnswer ? "클리닉 2개 추출 및 다운로드" : "클리닉 문제지 추출 및 다운로드")}</button>
+      <button className="primaryButton" disabled={!workbook || !rete || !analysis || busy} onClick={generate}>{busy ? "처리 중…" : (workbookAnswer && reteAnswer && answerAnalysis ? "클리닉 2개 추출 및 다운로드" : "클리닉 문제지 추출 및 다운로드")}</button>
       {downloads && <div className="downloadPanel">
         <p>다운로드가 시작되었습니다. 자동으로 내려받지 않으면 아래 버튼을 누르세요.</p>
         <div>
