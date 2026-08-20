@@ -4,7 +4,16 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 type TextItemLike = { str: string; transform: number[] };
 
 export type HanyoungSource = { passage: number; year: number; month: number; question: number };
-export type HanyoungWorkbookAnalysis = WorkbookAnalysis & { sources: HanyoungSource[]; c1ByPassage: Record<number, number>; c2ByPassage: Record<number, number>; c2YByPassage: Record<number, number>; answerC1ByPassage: Record<number, number>; answerC2ByPassage: Record<number, number> };
+export type HanyoungWorkbookAnalysis = WorkbookAnalysis & {
+  sources: HanyoungSource[];
+  c1ByPassage: Record<number, number>;
+  c2ByPassage: Record<number, number>;
+  c2YByPassage: Record<number, number>;
+  answerC1ByPassage: Record<number, number>;
+  answerC1YByPassage: Record<number, number>;
+  answerC2ByPassage: Record<number, number>;
+  answerC2YByPassage: Record<number, number>;
+};
 
 export type WorkbookPage = {
   page: number;
@@ -133,19 +142,64 @@ export async function analyzeHanyoung(workbookBytes: Uint8Array, answerBytes: Ui
   const [c1Detected, c2Detected] = await Promise.all([detectPassages(c1Pages), detectPassages(c2Pages)]);
   const answerSections = await analyzeAnswerWorkbook(answerBytes);
   const mapAnswerSection = async (sections: AnswerSection[]) => {
-    const result: Record<number, number> = {};
+    const result: Record<number, number> = {}; const yByPassage: Record<number, number> = {};
     for (const section of sections) for (let pageNo = section.startPage; pageNo <= section.endPage; pageNo += 1) {
       const page = await answer.getPage(pageNo); const content = await page.getTextContent();
-      const text = content.items.filter((x): x is TextItemLike => "str" in x).map((x) => x.str).join(" ");
-      for (const mapping of found.values()) {
-        const yy = String(mapping.year).slice(-2); const re = new RegExp(`(^|\\s)${mapping.passage}\\s+(?:20)?${yy}\\s*년\\s*${mapping.month}\\s*월\\s*${mapping.question}\\s*번`);
-        if (re.test(text)) result[mapping.passage] = pageNo;
+      const items = content.items.filter((x): x is TextItemLike => "str" in x);
+      const byLine = new Map<number, TextItemLike[]>();
+      for (const item of items) {
+        const y = Math.round(item.transform[5] * 2) / 2;
+        const line = byLine.get(y) ?? []; line.push(item); byLine.set(y, line);
+      }
+      for (const [y, line] of byLine) {
+        if (pageNo === section.startPage && y > section.startY + 12) continue;
+        if (pageNo === section.endPage && section.endY != null && y < section.endY - 12) continue;
+        const lineText = compact(line.map((item) => item.str).join(""));
+        for (const mapping of found.values()) {
+          const yy = String(mapping.year).slice(-2);
+          const shortNeedle = compact(`${mapping.passage}${yy}년${mapping.month}월${mapping.question}번`);
+          const longNeedle = compact(`${mapping.passage}${mapping.year}년${mapping.month}월${mapping.question}번`);
+          if (lineText.includes(shortNeedle) || lineText.includes(longNeedle)) {
+            result[mapping.passage] = pageNo; yByPassage[mapping.passage] = y;
+          }
+        }
       }
     }
-    return result;
+    return { pages: result, y: yByPassage };
   };
-  const [answerC1ByPassage, answerC2ByPassage] = await Promise.all([mapAnswerSection(answerSections.c1Sections), mapAnswerSection(answerSections.c2Sections)]);
-  return { ...base, sources: [...found.values()].sort((a, b) => a.passage - b.passage), c1ByPassage: c1Detected.pages, c2ByPassage: c2Detected.pages, c2YByPassage: c2Detected.y, answerC1ByPassage, answerC2ByPassage };
+  const [answerC1Detected, answerC2Detected] = await Promise.all([mapAnswerSection(answerSections.c1Sections), mapAnswerSection(answerSections.c2Sections)]);
+  return {
+    ...base,
+    sources: [...found.values()].sort((a, b) => a.passage - b.passage),
+    c1ByPassage: c1Detected.pages,
+    c2ByPassage: c2Detected.pages,
+    c2YByPassage: c2Detected.y,
+    answerC1ByPassage: answerC1Detected.pages,
+    answerC1YByPassage: answerC1Detected.y,
+    answerC2ByPassage: answerC2Detected.pages,
+    answerC2YByPassage: answerC2Detected.y,
+  };
+}
+
+function redactUnselectedAnswerBlocks(
+  page: import("pdf-lib").PDFPage,
+  pageNo: number,
+  pageMap: Record<number, number>,
+  yMap: Record<number, number>,
+  selected: Set<number>,
+) {
+  const markers = Object.keys(pageMap)
+    .map(Number)
+    .filter((passage) => pageMap[passage] === pageNo && yMap[passage] != null)
+    .map((passage) => ({ passage, y: yMap[passage] }))
+    .sort((a, b) => b.y - a.y);
+  const { width } = page.getSize(); const footerGuard = 38;
+  markers.forEach((marker, index) => {
+    if (selected.has(marker.passage)) return;
+    const next = markers[index + 1]; const bottom = next ? next.y + 10 : footerGuard;
+    const top = marker.y + 14;
+    if (top > bottom) page.drawRectangle({ x: 0, y: bottom, width, height: top - bottom, color: rgb(1, 1, 1), borderWidth: 0 });
+  });
 }
 
 async function findRetePage(bytes: Uint8Array, source: HanyoungSource) {
@@ -177,6 +231,15 @@ export async function buildHanyoungPdf(
   if (!sourceBytes) throw new Error("워크북 정답지가 없습니다.");
   const source = await PDFDocument.load(sourceBytes.slice()); const output = await PDFDocument.create();
   const pageMap = kind === "question" ? analysis.c1ByPassage : analysis.answerC1ByPassage;
+  const selected = new Set(passages);
+  if (kind === "answer") {
+    const missingC1 = passages.filter((passage) => analysis.answerC1ByPassage[passage] == null);
+    const missingC2 = passages.filter((passage) => analysis.answerC2ByPassage[passage] == null);
+    if (missingC1.length || missingC2.length) {
+      const details = [missingC1.length ? `문장배열 ${missingC1.join(", ")}번` : "", missingC2.length ? `영작배열 ${missingC2.join(", ")}번` : ""].filter(Boolean).join(" / ");
+      throw new Error(`워크북 정답지에서 선택 범위의 정답을 모두 찾지 못했습니다: ${details}`);
+    }
+  }
   const c1Pages = [...new Set(passages.map((n) => pageMap[n]).filter(Boolean))];
   if (kind === "question") {
     const missingAnchors = c1Pages.filter((pageNo) => analysis.pages[pageNo - 1]?.anchorY == null);
@@ -190,7 +253,7 @@ export async function buildHanyoungPdf(
         const { width } = p.getSize(); const footerGuard = 62;
         p.drawRectangle({ x: 0, y: footerGuard, width, height: Math.max(0, anchorY + 24 - footerGuard), color: rgb(1, 1, 1), borderWidth: 0 });
       }
-    }
+    } else redactUnselectedAnswerBlocks(p, c1Pages[index], analysis.answerC1ByPassage, analysis.answerC1YByPassage, selected);
   });
   for (const passage of passages) {
     const mapping = analysis.sources.find((x) => x.passage === passage); if (!mapping) throw new Error(`${passage}번 지문의 모의고사 출처를 찾지 못했습니다.`);
@@ -205,7 +268,7 @@ export async function buildHanyoungPdf(
       const pageNo = c2Pages[index]; const omittedAfter = analysis.sources.filter((x) => x.passage > Math.max(...passages) && analysis.c2ByPassage[x.passage] === pageNo).sort((a, b) => a.passage - b.passage)[0];
       const y = omittedAfter && analysis.c2YByPassage[omittedAfter.passage];
       if (y) { const { width } = p.getSize(); p.drawRectangle({ x: 40, y: 62, width: width - 80, height: Math.max(0, y + 12 - 62), color: rgb(1, 1, 1), borderWidth: 0 }); }
-    }
+    } else redactUnselectedAnswerBlocks(p, c2Pages[index], analysis.answerC2ByPassage, analysis.answerC2YByPassage, selected);
   });
   return output.save({ useObjectStreams: true });
 }
