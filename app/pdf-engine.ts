@@ -140,34 +140,47 @@ export async function analyzeHanyoung(workbookBytes: Uint8Array, answerBytes: Ui
   };
   const c1Pages = base.c1Groups.flat(); const c2Pages = base.c2Groups.flat();
   const [c1Detected, c2Detected] = await Promise.all([detectPassages(c1Pages), detectPassages(c2Pages)]);
-  const answerSections = await analyzeAnswerWorkbook(answerBytes);
-  const mapAnswerSection = async (sections: AnswerSection[]) => {
+  const answerPageData: { items: TextItemLike[]; text: string }[] = [];
+  for (let pageNo = 1; pageNo <= answer.numPages; pageNo += 1) {
+    const page = await answer.getPage(pageNo); const content = await page.getTextContent();
+    const items = content.items.filter((x): x is TextItemLike => "str" in x);
+    answerPageData.push({ items, text: compact(items.map((item) => item.str).join("")) });
+  }
+  const sectionRange = (heading: string, nextHeadings: string[]) => {
+    const startIndex = answerPageData.findIndex((page) => page.text.includes(heading));
+    if (startIndex < 0) return [];
+    const relativeEnd = answerPageData.slice(startIndex).findIndex((page, offset) => offset > 0 && nextHeadings.some((next) => page.text.includes(next)));
+    const endIndex = relativeEnd < 0 ? answerPageData.length - 1 : startIndex + relativeEnd;
+    return Array.from({ length: endIndex - startIndex + 1 }, (_, index) => startIndex + index + 1);
+  };
+  const locateNeedleY = (items: TextItemLike[], needles: string[]) => {
+    const pieces = items.map((item) => compact(item.str)); const joined = pieces.join("");
+    const start = needles.map((needle) => joined.indexOf(needle)).find((index) => index >= 0);
+    if (start == null) return null;
+    let cursor = 0;
+    for (let index = 0; index < pieces.length; index += 1) {
+      const end = cursor + pieces[index].length;
+      if (start >= cursor && start < end) return items[index].transform[5];
+      cursor = end;
+    }
+    return null;
+  };
+  const mapAnswerPages = (pageNumbers: number[]) => {
     const result: Record<number, number> = {}; const yByPassage: Record<number, number> = {};
-    for (const section of sections) for (let pageNo = section.startPage; pageNo <= section.endPage; pageNo += 1) {
-      const page = await answer.getPage(pageNo); const content = await page.getTextContent();
-      const items = content.items.filter((x): x is TextItemLike => "str" in x);
-      const byLine = new Map<number, TextItemLike[]>();
-      for (const item of items) {
-        const y = Math.round(item.transform[5] * 2) / 2;
-        const line = byLine.get(y) ?? []; line.push(item); byLine.set(y, line);
-      }
-      for (const [y, line] of byLine) {
-        if (pageNo === section.startPage && y > section.startY + 12) continue;
-        if (pageNo === section.endPage && section.endY != null && y < section.endY - 12) continue;
-        const lineText = compact(line.map((item) => item.str).join(""));
-        for (const mapping of found.values()) {
-          const yy = String(mapping.year).slice(-2);
-          const shortNeedle = compact(`${mapping.passage}${yy}년${mapping.month}월${mapping.question}번`);
-          const longNeedle = compact(`${mapping.passage}${mapping.year}년${mapping.month}월${mapping.question}번`);
-          if (lineText.includes(shortNeedle) || lineText.includes(longNeedle)) {
-            result[mapping.passage] = pageNo; yByPassage[mapping.passage] = y;
-          }
-        }
+    for (const pageNo of pageNumbers) {
+      const data = answerPageData[pageNo - 1];
+      for (const mapping of found.values()) {
+        if (result[mapping.passage] != null) continue;
+        const yy = String(mapping.year).slice(-2);
+        const needles = [compact(`${mapping.passage}${yy}년${mapping.month}월${mapping.question}번`), compact(`${mapping.passage}${mapping.year}년${mapping.month}월${mapping.question}번`)];
+        const y = locateNeedleY(data.items, needles);
+        if (y != null) { result[mapping.passage] = pageNo; yByPassage[mapping.passage] = y; }
       }
     }
     return { pages: result, y: yByPassage };
   };
-  const [answerC1Detected, answerC2Detected] = await Promise.all([mapAnswerSection(answerSections.c1Sections), mapAnswerSection(answerSections.c2Sections)]);
+  const answerC1Detected = mapAnswerPages(sectionRange("c1문장배열", ["c2빈칸어휘", "a1어법선택"]));
+  const answerC2Detected = mapAnswerPages(sectionRange("c2영작배열", ["step03test", "s실전문제"]));
   return {
     ...base,
     sources: [...found.values()].sort((a, b) => a.passage - b.passage),
