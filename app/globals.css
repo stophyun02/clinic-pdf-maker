@@ -29,20 +29,6 @@ h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter
 .uploadedList span { color:#3978b4; font-size:13px; font-weight:850; }
 .uploadedList p { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#344150; font-size:13px; }
 .uploadedList b { color:#2c7a4b; font-size:12px; }
-.orDivider { display:flex; align-items:center; gap:16px; margin:20px 0 18px; color:#8a97a5; font-size:13px; }
-.orDivider::before,.orDivider::after { content:""; height:1px; flex:1; background:#dbe3eb; }
-.workspace { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
-.sectionTitle { display:flex; align-items:baseline; gap:12px; margin:0 0 12px; }
-.sectionTitle span { font-size:18px; font-weight:850; }.sectionTitle p { margin:0; color:var(--muted); font-size:13px; }
-.answerTitle { margin-top:30px; }
-.uploadCard { position:relative; min-height:240px; padding:28px; background:white; border:1px solid var(--line); border-radius:22px; box-shadow:0 10px 32px #253b5010; }
-.number { color:#8aa4b8; font-size:13px; font-weight:800; }
-.uploadCard h3 { margin:26px 0 8px; font-size:24px; }
-.uploadCard p { min-height:46px; color:var(--muted); line-height:1.55; }
-.compactCard { min-height:220px; }
-.fileButton { display:inline-flex; padding:12px 18px; border:1px solid var(--blue); border-radius:12px; color:var(--blue); font-weight:800; cursor:pointer; }
-.fileButton input { display:none; }
-.fileName { min-height:auto!important; margin:12px 0 0; color:var(--ink)!important; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .optionsCard { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-top:18px; padding:22px 26px; background:white; border:1px solid var(--line); border-radius:18px; }
 .optionsCard label { display:grid; grid-template-columns:1fr; gap:8px; color:var(--muted); font-size:13px; font-weight:700; }
 .optionsCard input,.optionsCard select { width:100%; padding:12px 14px; border:1px solid var(--line); border-radius:11px; background:white; color:var(--ink); outline:none; }
@@ -58,4 +44,4 @@ h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter
 .downloadPanel div { display:flex; gap:10px; flex-wrap:wrap; }
 .downloadPanel a { padding:12px 17px; border-radius:11px; background:#24653e; color:white; text-decoration:none; font-size:14px; font-weight:800; }
 .footnote { margin:14px 0 0; text-align:center; color:var(--muted); font-size:12px; }
-@media(max-width:760px){ .hero,.workspace,.optionsCard{grid-template-columns:1fr}.hero{padding-top:42px}.orderCard{justify-content:flex-start;overflow:auto}.batchDrop label{grid-template-columns:auto 1fr;padding:22px}.batchDrop strong{grid-column:1/-1;text-align:center}.uploadedList div{grid-template-columns:90px minmax(0,1fr)}.uploadedList b{display:none}.privacyBadge{font-size:0}.privacyBadge::after{content:"비공개";font-size:12px}.shell{width:min(100% - 24px,1040px)} }
+@media(max-width:760px){ .hero{grid-template-columns:1fr;padding-top:42px}.orderCard{justify-content:flex-start;overflow:auto}.batchDrop label{grid-template-columns:auto 1fr;padding:22px}.batchDrop strong{grid-column:1/-1;text-align:center}.uploadedList div{grid-template-columns:90px minmax(0,1fr)}.uploadedList b{display:none}.privacyBadge{font-size:0}.privacyBadge::after{content:"비공개";font-size:12px}.shell{width:min(100% - 24px,1040px)} }

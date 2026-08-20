@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useState } from "react";
+import { DragEvent, useState } from "react";
 import {
   analyzeAnswerWorkbook,
   analyzeWorkbook,
@@ -71,7 +71,7 @@ export default function Home() {
     if (files.some((file) => file.size > 100 * 1024 * 1024)) { setError("각 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
     const { slots, duplicate } = classifyFiles(files);
     if (duplicate || !slots.workbook || !slots.rete || !slots.workbookAnswer || !slots.reteAnswer) {
-      setError("파일명을 자동 구분하지 못했습니다. 파일명에 ‘리테’와 ‘정답’이 들어 있는지 확인하거나 아래에서 각각 선택하세요.");
+      setError("파일명을 자동 구분하지 못했습니다. 파일명에 ‘리테’와 ‘정답’이 들어 있는지 확인한 뒤 4개를 다시 올려주세요.");
       return;
     }
     setWorkbook(slots.workbook); setRete(slots.rete);
@@ -97,50 +97,6 @@ export default function Home() {
   function dropFiles(event: DragEvent<HTMLLabelElement>) {
     event.preventDefault();
     void acceptBatch(event.dataTransfer.files);
-  }
-
-  async function chooseWorkbook(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    setWorkbook(file); setAnalysis(null); setError("");
-    if (!file) return;
-    if (file.size > 100 * 1024 * 1024) { setError("워크북 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
-    setBusy(true); setStatus("워크북 전체 페이지를 분석하고 있습니다…");
-    try {
-      const result = await analyzeWorkbook(new Uint8Array(await file.arrayBuffer()));
-      if (!result.c1Groups.length) throw new Error("C1 문장배열 페이지를 찾지 못했습니다.");
-      setAnalysis(result);
-      setStatus(result.c2Groups.length
-        ? `C1 ${result.c1Groups.flat().length}쪽 · C2 ${result.c2Groups.flat().length}쪽을 찾았습니다.`
-        : `C1 ${result.c1Groups.flat().length}쪽을 찾았습니다. 이 교재에는 C2 영작배열이 없어 문장배열과 리테만 구성합니다.`);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "워크북 분석에 실패했습니다."); setStatus(""); }
-    finally { setBusy(false); }
-  }
-
-  function chooseRete(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    if (file && file.size > 100 * 1024 * 1024) { setError("리테 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
-    setRete(file); setError("");
-  }
-
-  async function chooseWorkbookAnswer(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    setWorkbookAnswer(file); setAnswerAnalysis(null); setError(""); setDownloads(null);
-    if (!file) return;
-    if (file.size > 100 * 1024 * 1024) { setError("워크북 정답 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
-    setBusy(true); setStatus("워크북 정답지에서 C1/C2 영역을 찾고 있습니다…");
-    try {
-      const result = await analyzeAnswerWorkbook(new Uint8Array(await file.arrayBuffer()));
-      if (!result.c1Sections.length) throw new Error("정답지에서 C1 문장배열 정답을 찾지 못했습니다.");
-      setAnswerAnalysis(result);
-      setStatus(`정답지에서 C1 ${result.c1Sections.length}개 · C2 ${result.c2Sections.length}개 단원을 찾았습니다.`);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "워크북 정답지 분석에 실패했습니다."); setStatus(""); }
-    finally { setBusy(false); }
-  }
-
-  function chooseReteAnswer(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0] ?? null;
-    if (file && file.size > 100 * 1024 * 1024) { setError("리테 정답 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
-    setReteAnswer(file); setError(""); setDownloads(null);
   }
 
   async function generate() {
@@ -213,33 +169,6 @@ export default function Home() {
             {uploadedFiles.map(([role, file]) => file && <div key={role}><span>{role}</span><p>{file.name}</p><b>완료</b></div>)}
           </div>}
         </label>
-      </section>
-      <p className="orDivider"><span>또는 아래에서 각각 선택</span></p>
-      <div className="sectionTitle"><span>문제지</span><p>필수 파일 2개</p></div>
-      <section className="workspace">
-        <div className="uploadCard">
-          <span className="number">01</span><h3>워크북 PDF</h3><p>C1 문장배열과 C2 영작배열을 자동으로 찾습니다.</p>
-          <label className="fileButton">워크북 선택<input type="file" accept="application/pdf" onChange={chooseWorkbook} /></label>
-          {workbook && <p className="fileName">{workbook.name}</p>}
-        </div>
-        <div className="uploadCard">
-          <span className="number">02</span><h3>리뷰테스트 PDF</h3><p>클리닉 중간에 넣을 리테 파일을 선택합니다.</p>
-          <label className="fileButton">리테 선택<input type="file" accept="application/pdf" onChange={chooseRete} /></label>
-          {rete && <p className="fileName">{rete.name}</p>}
-        </div>
-      </section>
-      <div className="sectionTitle answerTitle"><span>정답지</span><p>선택 사항 · 두 파일을 모두 올리면 정답지도 생성됩니다</p></div>
-      <section className="workspace">
-        <div className="uploadCard compactCard">
-          <span className="number">03</span><h3>워크북 정답 PDF</h3><p>C1 문장배열과 C2 영작배열 정답만 남깁니다.</p>
-          <label className="fileButton">워크북 정답 선택<input type="file" accept="application/pdf" onChange={chooseWorkbookAnswer} /></label>
-          {workbookAnswer && <p className="fileName">{workbookAnswer.name}</p>}
-        </div>
-        <div className="uploadCard compactCard">
-          <span className="number">04</span><h3>리테 정답 PDF</h3><p>워크북 정답 사이에 들어갈 리테 정답입니다.</p>
-          <label className="fileButton">리테 정답 선택<input type="file" accept="application/pdf" onChange={chooseReteAnswer} /></label>
-          {reteAnswer && <p className="fileName">{reteAnswer.name}</p>}
-        </div>
       </section>
       {status && <div className="notice success">{busy && <i />} {status}</div>}
       {error && <div className="notice error">{error}</div>}
