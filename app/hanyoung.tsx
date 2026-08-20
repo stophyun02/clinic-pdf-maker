@@ -19,6 +19,7 @@ export default function HanyoungMaker() {
   const [analysis, setAnalysis] = useState<HanyoungWorkbookAnalysis | null>(null);
   const [start, setStart] = useState(2); const [end, setEnd] = useState(18);
   const [library, setLibrary] = useState<SavedFile[]>([]); const [busy, setBusy] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; filename: string } | null>(null);
   const [status, setStatus] = useState(""); const [error, setError] = useState("");
   const [downloads, setDownloads] = useState<{ q: string; a?: string } | null>(null);
 
@@ -40,9 +41,11 @@ export default function HanyoungMaker() {
   }
 
   async function uploadLibrary(files: File[]) {
-    setError(""); setBusy(true); let count = 0;
+    if (busy || !files.length) return;
+    setError(""); setBusy(true); setStatus(""); let count = 0;
     try {
       for (const file of files) {
+        setUploadProgress({ current: count + 1, total: files.length, filename: file.name });
         if (!isPdf(file)) throw new Error(`${file.name}: PDF 파일이 아닙니다.`);
         const meta = parseReteName(file); if (!meta) throw new Error(`${file.name}: 파일명에서 연도와 월을 찾지 못했습니다.`);
         const form = new FormData(); form.set("file", file); form.set("year", String(meta.year)); form.set("month", String(meta.month)); form.set("kind", meta.kind);
@@ -50,7 +53,7 @@ export default function HanyoungMaker() {
       }
       await refresh(); setStatus(`리테 ${count}개를 보관함에 영구 저장했습니다.`);
     } catch (e) { setError(e instanceof Error ? e.message : "리테 저장에 실패했습니다."); }
-    finally { setBusy(false); }
+    finally { setUploadProgress(null); setBusy(false); }
   }
 
   async function generate() {
@@ -77,7 +80,7 @@ export default function HanyoungMaker() {
   return <>
     <section className="hero hanyoungHero"><div><p className="stepLabel">HANYOUNG HIGH SCHOOL</p><h2>입력한 지문 범위만<br />출처까지 자동 조립합니다.</h2><p className="heroCopy">워크북 정답지의 출처를 읽어 해당 연도·월·문제 번호의 리테를 자동으로 찾아 배치합니다.</p></div><div className="orderCard"><span>문장배열</span><b>→</b><span>출처 리테</span><b>→</b><span>영작배열</span></div></section>
     <section className="hyGrid">
-      <div className="hyCard"><p className="stepLabel">1. 리테 보관함</p><h3>여러 연도 PDF 미리 저장</h3><label className="smallDrop" onDragOver={(e) => e.preventDefault()} onDrop={drop(uploadLibrary)}>문제·정답 PDF 여러 개 드래그<input type="file" accept="application/pdf" multiple onChange={(e) => e.target.files && void uploadLibrary(Array.from(e.target.files))} /></label><div className="libraryHeader"><p>저장된 파일 {library.length}개</p><span>같은 연도·월은 새 파일로 교체</span></div>{library.length ? <div className="reteFileList">{library.map((file) => <div className="reteFile" key={`${file.year}-${file.month}-${file.kind}`}><span className={`fileKind ${file.kind}`}>{file.kind === "question" ? "문제" : "정답"}</span><div><strong>{file.year}년 {file.month}월</strong><p title={file.filename}>{file.filename}</p></div><small>{formatSize(file.size)}</small></div>)}</div> : <div className="emptyLibrary">아직 저장된 리테 파일이 없습니다.</div>}</div>
+      <div className="hyCard"><p className="stepLabel">1. 리테 보관함</p><h3>여러 연도 PDF 미리 저장</h3><label className={`smallDrop ${uploadProgress ? "isUploading" : ""}`} onDragOver={(e) => e.preventDefault()} onDrop={drop(uploadLibrary)}>{uploadProgress ? <div className="uploadingState"><i /><div><strong>업로드 중 {uploadProgress.current}/{uploadProgress.total}</strong><p title={uploadProgress.filename}>{uploadProgress.filename}</p></div></div> : <>문제·정답 PDF 여러 개 드래그</>}<input disabled={busy} type="file" accept="application/pdf" multiple onChange={(e) => e.target.files && void uploadLibrary(Array.from(e.target.files))} /></label><div className="libraryHeader"><p>저장된 파일 {library.length}개</p><span>같은 연도·월은 새 파일로 교체</span></div>{library.length ? <div className="reteFileList">{library.map((file) => <div className="reteFile" key={`${file.year}-${file.month}-${file.kind}`}><span className={`fileKind ${file.kind}`}>{file.kind === "question" ? "문제" : "정답"}</span><div><strong>{file.year}년 {file.month}월</strong><p title={file.filename}>{file.filename}</p></div><small>{formatSize(file.size)}</small></div>)}</div> : <div className="emptyLibrary">아직 저장된 리테 파일이 없습니다.</div>}</div>
       <div className="hyCard"><p className="stepLabel">2. 이번 워크북</p><h3>워크북 + 정답지</h3><label className="smallDrop" onDragOver={(e) => e.preventDefault()} onDrop={drop(acceptWorkbook)}>PDF 2개를 함께 드래그<input type="file" accept="application/pdf" multiple onChange={(e) => e.target.files && void acceptWorkbook(Array.from(e.target.files))} /></label>{workbook && <p className="libraryCount">{workbook.name}<br />{answer?.name}</p>}</div>
     </section>
     <section className="rangeCard"><div><label>시작 지문 번호<input type="number" min="2" max="40" step="2" value={start} onChange={(e) => setStart(Number(e.target.value))} /></label><span>부터</span><label>끝 지문 번호<input type="number" min="2" max="40" step="2" value={end} onChange={(e) => setEnd(Number(e.target.value))} /></label><span>까지</span></div><p>{analysis ? analysis.sources.filter((x) => x.passage >= start && x.passage <= end).map((x) => x.passage).join(" · ") : "워크북을 올리면 실제 지문 번호가 표시됩니다."}</p></section>
