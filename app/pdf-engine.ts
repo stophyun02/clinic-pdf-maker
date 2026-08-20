@@ -306,7 +306,18 @@ export async function analyzeAnswerWorkbook(bytes: Uint8Array): Promise<AnswerWo
     for (const [y, line] of byLine) {
       const lineText = compact(line.map((item) => item.str).join(""));
       const name = SECTION_NAMES.find((candidate) => lineText === candidate || lineText.startsWith(candidate));
-      if (name) headings.push({ name, page: index, y });
+      if (name) {
+        // The passage number is printed immediately above the section label.
+        // Use it as the visual boundary so the first number is not masked.
+        const passageTitleY = [...byLine]
+          .filter(([candidateY, candidateLine]) => {
+            if (candidateY <= y || candidateY - y > 90) return false;
+            const candidateText = compact(candidateLine.map((item) => item.str).join(""));
+            return candidateText.includes("모의고사") && /\d+(?:\d+)?번$/.test(candidateText);
+          })
+          .sort((a, b) => a[0] - b[0])[0]?.[0];
+        headings.push({ name, page: index, y: passageTitleY ?? y });
+      }
     }
   }
 
