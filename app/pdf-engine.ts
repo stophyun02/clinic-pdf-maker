@@ -83,6 +83,12 @@ export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalys
         break;
       }
     }
+    if (anchorY == null && pageText.includes("아래주어진문장") && pageText.includes("이어질문장")) {
+      const fallback = items
+        .filter((item) => compact(item.str).includes("아래") || compact(item.str).includes("주어진문장"))
+        .sort((a, b) => a.transform[5] - b.transform[5])[0];
+      if (fallback) anchorY = fallback.transform[5];
+    }
     pages.push({ page: index, kind: c1 ? "C1" : c2 ? "C2" : null, anchorY });
   }
 
@@ -172,11 +178,18 @@ export async function buildHanyoungPdf(
   const source = await PDFDocument.load(sourceBytes.slice()); const output = await PDFDocument.create();
   const pageMap = kind === "question" ? analysis.c1ByPassage : analysis.answerC1ByPassage;
   const c1Pages = [...new Set(passages.map((n) => pageMap[n]).filter(Boolean))];
+  if (kind === "question") {
+    const missingAnchors = c1Pages.filter((pageNo) => analysis.pages[pageNo - 1]?.anchorY == null);
+    if (missingAnchors.length) throw new Error(`하단 문제 위치를 안전하게 찾지 못한 문장배열 페이지: ${missingAnchors.join(", ")}`);
+  }
   const copiedC1 = await output.copyPages(source, c1Pages.map((n) => n - 1)); copiedC1.forEach((p, index) => {
     output.addPage(p);
     if (kind === "question") {
       const original = c1Pages[index]; const anchorY = analysis.pages[original - 1]?.anchorY;
-      if (anchorY != null) { const { width } = p.getSize(); p.drawRectangle({ x: 45, y: 62, width: width - 90, height: Math.max(0, anchorY + 20 - 62), color: rgb(1, 1, 1), borderWidth: 0 }); }
+      if (anchorY != null) {
+        const { width } = p.getSize(); const footerGuard = 62;
+        p.drawRectangle({ x: 0, y: footerGuard, width, height: Math.max(0, anchorY + 24 - footerGuard), color: rgb(1, 1, 1), borderWidth: 0 });
+      }
     }
   });
   for (const passage of passages) {
