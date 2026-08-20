@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, useState } from "react";
 import {
   analyzeAnswerWorkbook,
   analyzeWorkbook,
@@ -29,6 +29,17 @@ function classifyFiles(files: File[]) {
   return { slots, duplicate };
 }
 
+function inferSection(fileName: string, groupCount: number) {
+  if (groupCount <= 1) return 1;
+  const name = fileName.normalize("NFKC").toLowerCase();
+  const match = name.match(/([1-9])\s*과/) ?? name.match(/(?:lesson|unit|제)\s*([1-9])/);
+  const section = match ? Number(match[1]) : 0;
+  if (!section || section > groupCount) {
+    throw new Error(`리테 파일명에서 단원을 확인하지 못했습니다. 파일명에 1과, 2과처럼 단원 번호를 넣어주세요.`);
+  }
+  return section;
+}
+
 export default function Home() {
   const [workbook, setWorkbook] = useState<File | null>(null);
   const [rete, setRete] = useState<File | null>(null);
@@ -36,14 +47,11 @@ export default function Home() {
   const [workbookAnswer, setWorkbookAnswer] = useState<File | null>(null);
   const [reteAnswer, setReteAnswer] = useState<File | null>(null);
   const [answerAnalysis, setAnswerAnalysis] = useState<AnswerWorkbookAnalysis | null>(null);
-  const [section, setSection] = useState(1);
-  const [reteRange, setReteRange] = useState("all");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [downloads, setDownloads] = useState<Downloads>(null);
-  const sectionCount = useMemo(() => analysis?.c1Groups.length ?? 0, [analysis]);
   const hasC2 = Boolean(analysis?.c2Groups.length);
 
   async function acceptBatch(fileList: FileList | File[]) {
@@ -68,10 +76,11 @@ export default function Home() {
       ]);
       if (!questionResult.c1Groups.length) throw new Error("워크북에서 C1 문장배열 페이지를 찾지 못했습니다.");
       if (!answerResult.c1Sections.length) throw new Error("워크북 정답지에서 C1 문장배열 정답을 찾지 못했습니다.");
-      setAnalysis(questionResult); setAnswerAnalysis(answerResult); setSection(1);
+      const detectedSection = inferSection(slots.rete.name, questionResult.c1Groups.length);
+      setAnalysis(questionResult); setAnswerAnalysis(answerResult);
       setStatus(questionResult.c2Groups.length
-        ? "4개 파일이 준비되었습니다. 문제지·정답지를 바로 만들 수 있습니다."
-        : "4개 파일이 준비되었습니다. C2가 없는 교재라 문장배열과 리테로 구성합니다.");
+        ? `${detectedSection}과로 자동 확인했습니다. 문제지·정답지를 바로 만들 수 있습니다.`
+        : `${detectedSection}과로 자동 확인했습니다. C2가 없어 문장배열과 리테로 구성합니다.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "파일 분석에 실패했습니다."); setStatus(""); }
     finally { setBusy(false); }
   }
@@ -90,7 +99,7 @@ export default function Home() {
     try {
       const result = await analyzeWorkbook(new Uint8Array(await file.arrayBuffer()));
       if (!result.c1Groups.length) throw new Error("C1 문장배열 페이지를 찾지 못했습니다.");
-      setAnalysis(result); setSection(1);
+      setAnalysis(result);
       setStatus(result.c2Groups.length
         ? `C1 ${result.c1Groups.flat().length}쪽 · C2 ${result.c2Groups.flat().length}쪽을 찾았습니다.`
         : `C1 ${result.c1Groups.flat().length}쪽을 찾았습니다. 이 교재에는 C2 영작배열이 없어 문장배열과 리테만 구성합니다.`);
@@ -134,6 +143,7 @@ export default function Home() {
     }
     setBusy(true); setError(""); setStatus("클리닉 PDF를 만들고 있습니다…");
     try {
+      const section = inferSection(rete.name, analysis.c1Groups.length);
       if (downloads) {
         URL.revokeObjectURL(downloads.questionUrl);
         if (downloads.answerUrl) URL.revokeObjectURL(downloads.answerUrl);
@@ -143,13 +153,13 @@ export default function Home() {
         new Uint8Array(await rete.arrayBuffer()),
         analysis,
         section,
-        reteRange,
+        "all",
       );
       const answerPromise = wantsAnswer
         ? buildClinicAnswerPdf(
             new Uint8Array(await workbookAnswer!.arrayBuffer()),
             new Uint8Array(await reteAnswer!.arrayBuffer()),
-            answerAnalysis!, section, reteRange, hasC2,
+            answerAnalysis!, section, "all", hasC2,
           )
         : null;
       const [questionBytes, answerBytes] = await Promise.all([questionPromise, answerPromise]);
@@ -218,10 +228,6 @@ export default function Home() {
           <label className="fileButton">리테 정답 선택<input type="file" accept="application/pdf" onChange={chooseReteAnswer} /></label>
           {reteAnswer && <p className="fileName">{reteAnswer.name}</p>}
         </div>
-      </section>
-      <section className="optionsCard">
-        <label><span>워크북 단원</span><select value={section} onChange={(event) => setSection(Number(event.target.value))} disabled={!sectionCount}>{Array.from({length:Math.max(sectionCount,1)},(_,index)=><option key={index+1} value={index+1}>{index+1}과</option>)}</select></label>
-        <label><span>리테 페이지 범위</span><input value={reteRange} onChange={(event)=>setReteRange(event.target.value)} placeholder="all 또는 1-5" /></label>
       </section>
       {status && <div className="notice success">{busy && <i />} {status}</div>}
       {error && <div className="notice error">{error}</div>}
