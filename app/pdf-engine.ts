@@ -142,16 +142,21 @@ export async function analyzeHanyoung(workbookBytes: Uint8Array, answerBytes: Ui
   return { ...base, sources: [...found.values()].sort((a, b) => a.passage - b.passage), c1ByPassage: c1Detected.pages, c2ByPassage: c2Detected.pages, c2YByPassage: c2Detected.y, answerC1ByPassage, answerC2ByPassage };
 }
 
-async function findRetePage(bytes: Uint8Array, question: number) {
+async function findRetePage(bytes: Uint8Array, source: HanyoungSource) {
   const pdfjs = await import("pdfjs-dist/build/pdf.mjs"); pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
   const doc = await pdfjs.getDocument({ data: bytes.slice() }).promise;
-  const exact = new RegExp(`(^|\\s)${question}(?=\\s|번|\\.|$)`);
+  const compactCode = `${String(source.year).slice(-2)}${String(source.month).padStart(2, "0")}${String(source.question).padStart(2, "0")}`;
+  const pageTexts: string[] = [];
   for (let i = 1; i <= doc.numPages; i += 1) {
     const page = await doc.getPage(i); const content = await page.getTextContent();
     const text = content.items.filter((x): x is TextItemLike => "str" in x).map((x) => x.str).join(" ");
-    if (exact.test(text)) return i;
+    pageTexts.push(text);
+    if (text.replace(/\s+/g, "").includes(compactCode)) return i;
   }
-  throw new Error(`리테에서 ${question}번 문제를 찾지 못했습니다.`);
+  const exact = new RegExp(`(^|\\s)${source.question}(?=\\s|번|\\.|$)`);
+  const fallback = pageTexts.findIndex((text) => exact.test(text));
+  if (fallback >= 0) return fallback + 1;
+  throw new Error(`리테에서 ${source.question}번 문제를 찾지 못했습니다.`);
 }
 
 export async function buildHanyoungPdf(
@@ -177,7 +182,7 @@ export async function buildHanyoungPdf(
   for (const passage of passages) {
     const mapping = analysis.sources.find((x) => x.passage === passage); if (!mapping) throw new Error(`${passage}번 지문의 모의고사 출처를 찾지 못했습니다.`);
     const bytes = await reteLoader(mapping, kind); const rete = await PDFDocument.load(bytes.slice());
-    const pageNo = await findRetePage(bytes, mapping.question); const [page] = await output.copyPages(rete, [pageNo - 1]); output.addPage(page);
+    const pageNo = await findRetePage(bytes, mapping); const [page] = await output.copyPages(rete, [pageNo - 1]); output.addPage(page);
   }
   const c2Map = kind === "question" ? analysis.c2ByPassage : analysis.answerC2ByPassage;
   const c2Pages = [...new Set(passages.map((n) => c2Map[n]).filter(Boolean))];
