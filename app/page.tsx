@@ -9,6 +9,7 @@ import {
   buildClinicPdf,
   WorkbookAnalysis,
 } from "./pdf-engine";
+import HanyoungMaker from "./hanyoung";
 
 type Downloads = { questionUrl: string; answerUrl?: string; baseName: string } | null;
 type FileSlots = { workbook?: File; rete?: File; workbookAnswer?: File; reteAnswer?: File };
@@ -41,6 +42,7 @@ function inferSection(fileName: string, groupCount: number) {
 }
 
 export default function Home() {
+  const [mode, setMode] = useState<"general" | "hanyoung">("general");
   const [workbook, setWorkbook] = useState<File | null>(null);
   const [rete, setRete] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<WorkbookAnalysis | null>(null);
@@ -144,6 +146,8 @@ export default function Home() {
         <div><p className="eyebrow">ENGLISH CLINIC MAKER</p><h1>클리닉 PDF 만들기</h1></div>
         <span className="privacyBadge">비공개 · 브라우저 처리</span>
       </header>
+      <nav className="categoryTabs"><button className={mode === "general" ? "active" : ""} onClick={() => setMode("general")}>일반 클리닉</button><button className={mode === "hanyoung" ? "active" : ""} onClick={() => setMode("hanyoung")}>한영고</button></nav>
+      {mode === "hanyoung" ? <HanyoungMaker /> : <>
       <section className="hero">
         <div>
           <p className="stepLabel">WORKFLOW 01</p>
@@ -179,6 +183,7 @@ export default function Home() {
         </div>
       </div>}
       <p className="footnote">PDF는 서버에 저장되지 않으며 현재 브라우저 안에서만 처리됩니다.</p>
+      </>}
     </main>
   );
 }
