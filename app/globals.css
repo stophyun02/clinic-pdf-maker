@@ -16,6 +16,16 @@ h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter
 .orderCard { display:flex; align-items:center; justify-content:center; gap:13px; padding:25px; background:var(--ink); color:white; border-radius:22px; box-shadow:0 16px 45px #18202b20; }
 .orderCard span { font-weight:700; white-space:nowrap; }
 .orderCard b { color:#84b9df; }
+.batchDrop { margin:28px 0 10px; }
+.batchDrop label { min-height:150px; padding:26px 30px; display:grid; grid-template-columns:auto 1fr auto; align-items:center; gap:22px; border:2px dashed #8baed3; border-radius:20px; background:#f6faff; cursor:pointer; transition:.2s ease; }
+.batchDrop label:hover,.batchDrop.isDragging label { border-color:#3f7fbd; background:#edf6ff; transform:translateY(-2px); }
+.batchDrop input { display:none; }
+.dropIcon { width:62px; height:62px; display:grid; place-items:center; border-radius:18px; background:#4d8bc7; color:white; font-size:26px; font-weight:800; }
+.batchDrop h3 { margin:0 0 7px; font-size:21px; }
+.batchDrop p { margin:0; color:#687788; }
+.batchDrop strong { padding:12px 18px; border-radius:12px; background:#173f67; color:white; white-space:nowrap; }
+.orDivider { display:flex; align-items:center; gap:16px; margin:20px 0 18px; color:#8a97a5; font-size:13px; }
+.orDivider::before,.orDivider::after { content:""; height:1px; flex:1; background:#dbe3eb; }
 .workspace { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
 .sectionTitle { display:flex; align-items:baseline; gap:12px; margin:0 0 12px; }
 .sectionTitle span { font-size:18px; font-weight:850; }.sectionTitle p { margin:0; color:var(--muted); font-size:13px; }
@@ -43,4 +53,4 @@ h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter
 .downloadPanel div { display:flex; gap:10px; flex-wrap:wrap; }
 .downloadPanel a { padding:12px 17px; border-radius:11px; background:#24653e; color:white; text-decoration:none; font-size:14px; font-weight:800; }
 .footnote { margin:14px 0 0; text-align:center; color:var(--muted); font-size:12px; }
-@media(max-width:760px){ .hero,.workspace,.optionsCard{grid-template-columns:1fr}.hero{padding-top:42px}.orderCard{justify-content:flex-start;overflow:auto}.privacyBadge{font-size:0}.privacyBadge::after{content:"비공개";font-size:12px}.shell{width:min(100% - 24px,1040px)} }
+@media(max-width:760px){ .hero,.workspace,.optionsCard{grid-template-columns:1fr}.hero{padding-top:42px}.orderCard{justify-content:flex-start;overflow:auto}.batchDrop label{grid-template-columns:auto 1fr;padding:22px}.batchDrop strong{grid-column:1/-1;text-align:center}.privacyBadge{font-size:0}.privacyBadge::after{content:"비공개";font-size:12px}.shell{width:min(100% - 24px,1040px)} }

@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, DragEvent, useMemo, useState } from "react";
 import {
   analyzeAnswerWorkbook,
   analyzeWorkbook,
@@ -11,6 +11,23 @@ import {
 } from "./pdf-engine";
 
 type Downloads = { questionUrl: string; answerUrl?: string; baseName: string } | null;
+type FileSlots = { workbook?: File; rete?: File; workbookAnswer?: File; reteAnswer?: File };
+
+const isPdf = (file: File) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
+
+function classifyFiles(files: File[]) {
+  const slots: FileSlots = {};
+  let duplicate = false;
+  for (const file of files) {
+    const name = file.name.normalize("NFKC").toLowerCase();
+    const answer = name.includes("정답") || name.includes("answer");
+    const rete = name.includes("리테") || name.includes("리뷰") || name.includes("review") || name.includes("rete");
+    const key: keyof FileSlots = answer ? (rete ? "reteAnswer" : "workbookAnswer") : (rete ? "rete" : "workbook");
+    if (slots[key]) duplicate = true;
+    else slots[key] = file;
+  }
+  return { slots, duplicate };
+}
 
 export default function Home() {
   const [workbook, setWorkbook] = useState<File | null>(null);
@@ -24,9 +41,45 @@ export default function Home() {
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [downloads, setDownloads] = useState<Downloads>(null);
   const sectionCount = useMemo(() => analysis?.c1Groups.length ?? 0, [analysis]);
   const hasC2 = Boolean(analysis?.c2Groups.length);
+
+  async function acceptBatch(fileList: FileList | File[]) {
+    const files = Array.from(fileList);
+    setDragging(false); setError(""); setDownloads(null);
+    if (files.length !== 4) { setError("PDF 4개를 한 번에 선택하세요: 워크북, 리테, 워크북 정답, 리테 정답"); return; }
+    if (files.some((file) => !isPdf(file))) { setError("PDF 파일만 올릴 수 있습니다."); return; }
+    if (files.some((file) => file.size > 100 * 1024 * 1024)) { setError("각 PDF는 100MB 이하만 사용할 수 있습니다."); return; }
+    const { slots, duplicate } = classifyFiles(files);
+    if (duplicate || !slots.workbook || !slots.rete || !slots.workbookAnswer || !slots.reteAnswer) {
+      setError("파일명을 자동 구분하지 못했습니다. 파일명에 ‘리테’와 ‘정답’이 들어 있는지 확인하거나 아래에서 각각 선택하세요.");
+      return;
+    }
+    setWorkbook(slots.workbook); setRete(slots.rete);
+    setWorkbookAnswer(slots.workbookAnswer); setReteAnswer(slots.reteAnswer);
+    setAnalysis(null); setAnswerAnalysis(null); setBusy(true);
+    setStatus("4개 파일을 구분하고 워크북 구조를 분석하고 있습니다…");
+    try {
+      const [questionResult, answerResult] = await Promise.all([
+        analyzeWorkbook(new Uint8Array(await slots.workbook.arrayBuffer())),
+        analyzeAnswerWorkbook(new Uint8Array(await slots.workbookAnswer.arrayBuffer())),
+      ]);
+      if (!questionResult.c1Groups.length) throw new Error("워크북에서 C1 문장배열 페이지를 찾지 못했습니다.");
+      if (!answerResult.c1Sections.length) throw new Error("워크북 정답지에서 C1 문장배열 정답을 찾지 못했습니다.");
+      setAnalysis(questionResult); setAnswerAnalysis(answerResult); setSection(1);
+      setStatus(questionResult.c2Groups.length
+        ? "4개 파일이 준비되었습니다. 문제지·정답지를 바로 만들 수 있습니다."
+        : "4개 파일이 준비되었습니다. C2가 없는 교재라 문장배열과 리테로 구성합니다.");
+    } catch (reason) { setError(reason instanceof Error ? reason.message : "파일 분석에 실패했습니다."); setStatus(""); }
+    finally { setBusy(false); }
+  }
+
+  function dropFiles(event: DragEvent<HTMLLabelElement>) {
+    event.preventDefault();
+    void acceptBatch(event.dataTransfer.files);
+  }
 
   async function chooseWorkbook(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0] ?? null;
@@ -126,6 +179,20 @@ export default function Home() {
         </div>
         <div className="orderCard"><span>문장배열</span><b>→</b><span>리뷰테스트</span><b>→</b><span>영작배열(있는 경우)</span></div>
       </section>
+      <section className={`batchDrop ${dragging ? "isDragging" : ""}`}>
+        <label
+          onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={() => setDragging(false)}
+          onDrop={dropFiles}
+        >
+          <span className="dropIcon">4</span>
+          <div><h3>PDF 4개를 여기에 한 번에 드래그</h3><p>워크북 · 리테 · 워크북 정답 · 리테 정답을 자동으로 구분합니다.</p></div>
+          <strong>4개 파일 선택</strong>
+          <input type="file" accept="application/pdf" multiple onChange={(event) => event.target.files && void acceptBatch(event.target.files)} />
+        </label>
+      </section>
+      <p className="orDivider"><span>또는 아래에서 각각 선택</span></p>
       <div className="sectionTitle"><span>문제지</span><p>필수 파일 2개</p></div>
       <section className="workspace">
         <div className="uploadCard">
