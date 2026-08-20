@@ -87,14 +87,14 @@ export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalys
     let anchorY: number | null = null;
     for (const [y, line] of byLine) {
       const lineText = compact(line.map((item) => item.str).join(""));
-      if (lineText.includes("아래주어진문장") && (lineText.includes("들어갈위치") || lineText.includes("이어질문장"))) {
+      if (lineText.includes("아래주어진문장") && (lineText.includes("들어갈") || lineText.includes("이어질"))) {
         anchorY = y;
         break;
       }
     }
-    if (anchorY == null && pageText.includes("아래주어진문장") && pageText.includes("이어질문장")) {
+    if (anchorY == null && pageText.includes("아래주어진문장") && (pageText.includes("들어갈") || pageText.includes("이어질"))) {
       const fallback = items
-        .filter((item) => compact(item.str).includes("아래") || compact(item.str).includes("주어진문장"))
+        .filter((item) => compact(item.str).includes("아래") || compact(item.str).includes("주어진"))
         .sort((a, b) => a.transform[5] - b.transform[5])[0];
       if (fallback) anchorY = fallback.transform[5];
     }
