@@ -58,9 +58,6 @@ export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalys
     const page = await document.getPage(index);
     const content = await page.getTextContent();
     const items = content.items.filter((item): item is TextItemLike => "str" in item && "transform" in item);
-    const text = compact(items.map((item) => item.str).join(" "));
-    const c1 = text.includes("c1문장배열") || (text.includes("c1") && text.includes("step01"));
-    const c2 = text.includes("c2영작배열") || (text.includes("c2") && text.includes("step02"));
 
     const byLine = new Map<number, TextItemLike[]>();
     for (const item of items) {
@@ -69,6 +66,12 @@ export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalys
       line.push(item);
       byLine.set(y, line);
     }
+    const lineTexts = [...byLine.values()].map((line) => compact(line.map((item) => item.str).join("")));
+    const pageText = compact(items.map((item) => item.str).join(" "));
+    const c1Header = lineTexts.some((line) => line === "c1" || line.startsWith("c1stepbystep"));
+    const c2Header = lineTexts.some((line) => line === "c2" || line.startsWith("c2stepbystep"));
+    const c1 = lineTexts.some((line) => line.includes("c1문장배열")) || (c1Header && pageText.includes("step01"));
+    const c2 = lineTexts.some((line) => line.includes("c2영작배열")) || (c2Header && pageText.includes("step02"));
     let anchorY: number | null = null;
     for (const [y, line] of byLine) {
       const lineText = compact(line.map((item) => item.str).join(""));
