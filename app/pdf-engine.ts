@@ -311,18 +311,27 @@ export async function analyzeAnswerWorkbook(bytes: Uint8Array): Promise<AnswerWo
   }
 
   headings.sort((a, b) => a.page - b.page || b.y - a.y);
+
+  // Answer sheets repeat the same section heading for every passage. Treat a
+  // consecutive run of identical headings as one logical section; otherwise
+  // only the first passage in C1/C2 is retained.
+  const logicalHeadings = headings.filter((heading, index) =>
+    index === 0 || heading.name !== headings[index - 1].name,
+  );
   const toSection = (heading: SectionHeading, position: number): AnswerSection => {
-    const next = headings[position + 1];
+    const next = logicalHeadings[position + 1];
     return {
       startPage: heading.page,
       startY: heading.y,
-      endPage: next ? (next.page === heading.page ? heading.page : next.page - 1) : document.numPages,
-      endY: next?.page === heading.page ? next.y : null,
+      // The next section can begin halfway down a later page. Include that
+      // page and mask everything from its heading downward.
+      endPage: next?.page ?? document.numPages,
+      endY: next?.y ?? null,
     };
   };
   const c1Sections: AnswerSection[] = [];
   const c2Sections: AnswerSection[] = [];
-  headings.forEach((heading, index) => {
+  logicalHeadings.forEach((heading, index) => {
     if (heading.name === "c1문장배열") c1Sections.push(toSection(heading, index));
     if (heading.name === "c2영작배열") c2Sections.push(toSection(heading, index));
   });
