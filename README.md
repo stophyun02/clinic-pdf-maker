@@ -1,4 +1,15 @@
-# vinext-starter
+# 클리닉 PDF 만들기
+
+비공개 Sites 환경에서 워크북·리테·정답지를 조립하는 도구입니다. 직접 업로드, 한영고 출처 매칭, Google Drive 자동 제작 흐름을 제공합니다.
+
+## Google Drive 연결
+
+1. Google Cloud에서 Drive API를 사용하는 서비스 계정을 만듭니다.
+2. 자료가 들어 있는 최상위 Drive 폴더를 서비스 계정 이메일에 `뷰어`로 공유합니다.
+3. `.env.example`의 세 값을 로컬 또는 Sites 런타임 값으로 설정합니다.
+4. 사이트의 `Drive 자동 제작` 탭에서 연결 상태와 검색된 PDF 수를 확인합니다.
+
+Drive 자동 제작은 학교 폴더, 워크북, 워크북 정답, 리테, 리테 정답, 표지를 모두 찾은 경우만 생성합니다. 누락·동점 후보·세부 지문 범위는 자동 생성을 중단하고 현황표로 보고합니다.
 
 A clean full-stack starter running on
 [vinext](https://github.com/cloudflare/vinext), with optional Cloudflare D1 and

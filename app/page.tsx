@@ -10,6 +10,7 @@ import {
   WorkbookAnalysis,
 } from "./pdf-engine";
 import HanyoungMaker from "./hanyoung";
+import DriveMaker from "./drive-maker";
 
 type Downloads = { questionUrl: string; answerUrl?: string; baseName: string } | null;
 type FileSlots = { workbook?: File; rete?: File; workbookAnswer?: File; reteAnswer?: File };
@@ -42,7 +43,7 @@ function inferSection(fileName: string, groupCount: number) {
 }
 
 export default function Home() {
-  const [mode, setMode] = useState<"general" | "hanyoung">("general");
+  const [mode, setMode] = useState<"general" | "hanyoung" | "drive">("general");
   const [workbook, setWorkbook] = useState<File | null>(null);
   const [rete, setRete] = useState<File | null>(null);
   const [analysis, setAnalysis] = useState<WorkbookAnalysis | null>(null);
@@ -146,8 +147,8 @@ export default function Home() {
         <div><p className="eyebrow">ENGLISH CLINIC MAKER</p><h1>클리닉 PDF 만들기</h1></div>
         <span className="privacyBadge">비공개 · 브라우저 처리</span>
       </header>
-      <nav className="categoryTabs"><button className={mode === "general" ? "active" : ""} onClick={() => setMode("general")}>일반 클리닉</button><button className={mode === "hanyoung" ? "active" : ""} onClick={() => setMode("hanyoung")}>한영고</button></nav>
-      {mode === "hanyoung" ? <HanyoungMaker /> : <>
+      <nav className="categoryTabs"><button className={mode === "general" ? "active" : ""} onClick={() => setMode("general")}>직접 업로드</button><button className={mode === "hanyoung" ? "active" : ""} onClick={() => setMode("hanyoung")}>한영고</button><button className={mode === "drive" ? "active" : ""} onClick={() => setMode("drive")}>Drive 자동 제작</button></nav>
+      {mode === "drive" ? <DriveMaker /> : mode === "hanyoung" ? <HanyoungMaker /> : <>
       <section className="hero">
         <div>
           <p className="stepLabel">WORKFLOW 01</p>

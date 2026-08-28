@@ -8,7 +8,7 @@ export async function generateMetadata(): Promise<Metadata> {
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const image = `${protocol}://${host}/og.png`;
   const title = "클리닉 PDF 만들기";
-  const description = "문장배열, 리뷰테스트, 영작배열을 자동으로 합치는 비공개 도구";
+  const description = "학교별 범위를 입력하면 Google Drive 자료를 대조하고 클리닉 PDF를 만드는 비공개 도구";
   return {
     title,
     description,
