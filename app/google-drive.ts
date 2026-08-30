@@ -11,7 +11,7 @@ export type DriveFile = {
 };
 
 type DriveConfig = {
-  folderId: string;
+  folderIds: string[];
   email: string;
   privateKey: string;
 };
@@ -20,10 +20,10 @@ let tokenCache: { token: string; expiresAt: number } | null = null;
 
 function config(): DriveConfig | null {
   const values = env as unknown as Record<string, string | undefined>;
-  const folderId = values.GOOGLE_DRIVE_FOLDER_ID?.trim();
+  const folderIds = values.GOOGLE_DRIVE_FOLDER_ID?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
   const email = values.GOOGLE_SERVICE_ACCOUNT_EMAIL?.trim();
   const privateKey = values.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replace(/\\n/g, "\n").trim();
-  return folderId && email && privateKey ? { folderId, email, privateKey } : null;
+  return folderIds.length && email && privateKey ? { folderIds, email, privateKey } : null;
 }
 
 function base64Url(bytes: Uint8Array | string) {
@@ -84,7 +84,7 @@ export async function listDriveFiles(): Promise<DriveFile[]> {
   const settings = config();
   if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
   const output: DriveFile[] = [];
-  const queue = [{ id: settings.folderId, path: "" }];
+  const queue = settings.folderIds.map((id, index) => ({ id, path: settings.folderIds.length > 1 ? `자료실 ${index + 1}` : "" }));
   while (queue.length) {
     const folder = queue.shift()!;
     let pageToken = "";
