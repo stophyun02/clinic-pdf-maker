@@ -73,6 +73,20 @@ export function driveConfigured() {
   return Boolean(config());
 }
 
+export async function checkDriveRoots() {
+  const settings = config();
+  if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
+  const roots = [];
+  for (const id of settings.folderIds) {
+    const response = await driveFetch(`files/${encodeURIComponent(id)}?fields=id,name,mimeType&supportsAllDrives=true`);
+    if (!response.ok) throw new Error("공유 폴더를 읽지 못했습니다. 서비스 계정의 뷰어 권한을 확인해 주세요.");
+    const folder = await response.json<{ id: string; name: string; mimeType: string }>();
+    if (folder.mimeType !== "application/vnd.google-apps.folder") throw new Error("등록된 Drive 주소가 폴더가 아닙니다.");
+    roots.push({ id: folder.id, name: folder.name });
+  }
+  return roots;
+}
+
 async function driveFetch(path: string) {
   const settings = config();
   if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");

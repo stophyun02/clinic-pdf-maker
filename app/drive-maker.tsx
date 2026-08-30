@@ -65,7 +65,7 @@ function reportCsv(plan: Plan) {
 
 export default function DriveMaker() {
   const [scope, setScope] = useState(defaultScope);
-  const [connection, setConnection] = useState<{ connected: boolean; fileCount: number; pdfCount?: number; error?: string } | null>(null);
+  const [connection, setConnection] = useState<{ connected: boolean; fileCount: number; pdfCount?: number; rootCount?: number; rootNames?: string[]; error?: string } | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -182,7 +182,7 @@ export default function DriveMaker() {
 
     <section className="connectionBar">
       <div className={`connectionDot ${connection?.connected ? "ok" : "off"}`} />
-      <div><strong>{connection?.connected ? "자료실 연결됨" : "자료실 연결 필요"}</strong><p>{connection?.connected ? `Drive PDF ${connection.pdfCount ?? connection.fileCount}개를 검색할 수 있습니다.` : connection?.error ?? "관리자 연결 설정을 확인해 주세요."}</p></div>
+      <div><strong>{connection?.connected ? "자료실 연결됨" : "자료실 연결 필요"}</strong><p>{connection?.connected ? `Drive 폴더 ${connection.rootCount ?? connection.fileCount}개 연결 · ${connection.rootNames?.join(" · ") ?? "검색 준비 완료"}` : connection?.error ?? "관리자 연결 설정을 확인해 주세요."}</p></div>
       <button onClick={() => location.reload()}>새로 확인</button>
     </section>
 
