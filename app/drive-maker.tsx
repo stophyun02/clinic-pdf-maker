@@ -74,13 +74,30 @@ export default function DriveMaker() {
   const [filter, setFilter] = useState<"all" | Status>("all");
   const [confirmed, setConfirmed] = useState(false);
   const [localUploads, setLocalUploads] = useState<File[]>([]);
+  const [covers, setCovers] = useState<{ id: string; name: string; size?: string; modifiedTime?: string }[]>([]);
+  const [coverBusy, setCoverBusy] = useState(false);
+  const [coverMessage, setCoverMessage] = useState("");
   const localFileMap = useMemo(() => new Map(localUploads.map((file, index) => [`local:${index}`, file])), [localUploads]);
   const visibleJobs = useMemo(() => plan?.jobs.filter((job) => filter === "all" || job.status === filter) ?? [], [plan, filter]);
   const buildableCount = useMemo(() => plan?.jobs.filter((job) => job.status === "ready" || job.status === "questionReady").length ?? 0, [plan]);
 
   useEffect(() => {
     fetch("/api/drive/status").then((response) => response.json()).then(setConnection).catch(() => setConnection({ connected: false, fileCount: 0 }));
+    fetch("/api/drive/covers").then((response) => response.json()).then((payload) => setCovers(payload.covers ?? [])).catch(() => setCovers([]));
   }, []);
+
+  async function saveCover(file: File) {
+    setCoverBusy(true); setCoverMessage("");
+    try {
+      const form = new FormData(); form.append("file", file);
+      const response = await fetch("/api/drive/covers", { method: "POST", body: form });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "표지 저장에 실패했습니다.");
+      setCovers((current) => [payload.cover, ...current.filter((item) => item.id !== payload.cover.id)]);
+      setCoverMessage(`${payload.cover.name}을 Drive에 저장했습니다.`);
+    } catch (reason) { setCoverMessage(reason instanceof Error ? reason.message : "표지 저장에 실패했습니다."); }
+    finally { setCoverBusy(false); }
+  }
 
   function localRole(file: File): Role | null {
     const name = file.name.normalize("NFKC").toLowerCase();
@@ -197,6 +214,24 @@ export default function DriveMaker() {
         <strong>{localUploads.length ? `보충 파일 ${localUploads.length}개 선택됨` : "보충 PDF 선택"}</strong>
         <span>{localUploads.length ? localUploads.map((file) => file.name).join(" · ") : "여러 파일을 한 번에 선택할 수 있습니다"}</span>
       </label>
+    </section>
+
+    <section className="coverLibrary">
+      <div>
+        <p className="stepLabel">표지 자료실</p>
+        <h3>학교별 표지를 Drive에 계속 보관하세요</h3>
+        <p>파일명에 학교명과 주차를 넣으면 제작할 때 더 정확하게 찾습니다.</p>
+      </div>
+      <label className={`coverUploader ${coverBusy ? "busy" : ""}`}>
+        <input type="file" accept="application/pdf" disabled={coverBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void saveCover(file); event.target.value = ""; }} />
+        <strong>{coverBusy ? "Drive에 저장 중…" : "표지 PDF 저장"}</strong>
+      </label>
+      <div className="savedCovers">
+        <span>저장된 표지 {covers.length}개</span>
+        {covers.slice(0, 5).map((cover) => <b key={cover.id}>{cover.name}</b>)}
+        {!covers.length && <small>아직 저장된 표지가 없습니다.</small>}
+      </div>
+      {coverMessage && <p className="coverMessage">{coverMessage}</p>}
     </section>
 
     <section className="scopeWorkspace">

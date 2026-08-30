@@ -44,7 +44,7 @@ async function accessToken(settings: DriveConfig) {
   const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claim = base64Url(JSON.stringify({
     iss: settings.email,
-    scope: "https://www.googleapis.com/auth/drive.readonly",
+    scope: "https://www.googleapis.com/auth/drive",
     aud: "https://oauth2.googleapis.com/token",
     iat: now,
     exp: now + 3600,
@@ -87,11 +87,13 @@ export async function checkDriveRoots() {
   return roots;
 }
 
-async function driveFetch(path: string) {
+async function driveFetch(path: string, init: RequestInit = {}, base = "https://www.googleapis.com/drive/v3/") {
   const settings = config();
   if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
   const token = await accessToken(settings);
-  return fetch(`https://www.googleapis.com/drive/v3/${path}`, { headers: { authorization: `Bearer ${token}` } });
+  const headers = new Headers(init.headers);
+  headers.set("authorization", `Bearer ${token}`);
+  return fetch(`${base}${path}`, { ...init, headers });
 }
 
 export async function listDriveFiles(): Promise<DriveFile[]> {
@@ -130,6 +132,62 @@ export async function downloadDrivePdf(id: string) {
   const response = await driveFetch(`files/${encodeURIComponent(id)}?alt=media&supportsAllDrives=true`);
   if (!response.ok) throw new Error("Google Drive PDF를 내려받지 못했습니다.");
   return response;
+}
+
+async function coverFolder(create = false) {
+  const settings = config();
+  if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
+  const parent = settings.folderIds[0];
+  const query = new URLSearchParams({
+    q: `'${parent}' in parents and name='클리닉 표지' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: "files(id,name)",
+    pageSize: "1",
+  });
+  const found = await driveFetch(`files?${query}`);
+  if (!found.ok) throw new Error("표지 보관 폴더를 확인하지 못했습니다.");
+  const files = await found.json<{ files: { id: string; name: string }[] }>();
+  if (files.files[0]) return files.files[0].id;
+  if (!create) return null;
+  const response = await driveFetch("files?supportsAllDrives=true", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: "클리닉 표지", mimeType: "application/vnd.google-apps.folder", parents: [parent] }),
+  });
+  if (!response.ok) throw new Error("표지 보관 폴더를 만들지 못했습니다. 서비스 계정 권한을 편집자로 변경해 주세요.");
+  return (await response.json<{ id: string }>()).id;
+}
+
+export async function listDriveCovers() {
+  const folderId = await coverFolder(false);
+  if (!folderId) return [];
+  const query = new URLSearchParams({
+    q: `'${folderId}' in parents and mimeType='application/pdf' and trashed=false`,
+    fields: "files(id,name,size,modifiedTime)",
+    orderBy: "modifiedTime desc",
+    pageSize: "100",
+  });
+  const response = await driveFetch(`files?${query}`);
+  if (!response.ok) throw new Error("저장된 표지 목록을 읽지 못했습니다.");
+  return (await response.json<{ files: { id: string; name: string; size?: string; modifiedTime?: string }[] }>()).files;
+}
+
+export async function uploadDriveCover(name: string, bytes: Uint8Array) {
+  const folderId = await coverFolder(true);
+  const boundary = `clinic-${crypto.randomUUID()}`;
+  const metadata = JSON.stringify({ name, mimeType: "application/pdf", parents: [folderId] });
+  const body = new Blob([
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${metadata}\r\n`,
+    `--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`,
+    bytes,
+    `\r\n--${boundary}--`,
+  ]);
+  const response = await driveFetch("upload/files?uploadType=multipart&fields=id,name,size,modifiedTime&supportsAllDrives=true", {
+    method: "POST",
+    headers: { "content-type": `multipart/related; boundary=${boundary}` },
+    body,
+  }, "https://www.googleapis.com/upload/drive/v3/");
+  if (!response.ok) throw new Error("표지 PDF를 저장하지 못했습니다. 서비스 계정 권한을 편집자로 변경해 주세요.");
+  return response.json<{ id: string; name: string; size?: string; modifiedTime?: string }>();
 }
 
 export function apiAuthorized(request: Request) {
