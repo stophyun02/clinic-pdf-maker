@@ -1,4 +1,5 @@
 import { apiAuthorized, DriveFile, listDriveFiles } from "../../../google-drive";
+import { listStoredCovers } from "../../../cover-library";
 
 type Role = "workbook" | "workbookAnswer" | "rete" | "reteAnswer" | "cover";
 type Candidate = Pick<DriveFile, "id" | "name" | "path" | "size" | "modifiedTime">;
@@ -71,8 +72,13 @@ export async function POST(request: Request) {
     const parsed = parseScope(scope ?? "");
     if (!parsed.jobs.length) return Response.json({ error: "학교별 범위를 한 줄씩 입력해 주세요." }, { status: 400 });
     const files = await listDriveFiles();
+    const storedCovers = await listStoredCovers();
     const jobs = parsed.jobs.map((row) => {
       const materials = Object.fromEntries(roles.map((role) => [role, best(files, role, row.school, row.scope)])) as Record<Role, Candidate[]>;
+      const savedForSchool = storedCovers.filter((cover) => normalize(cover.filename).includes(normalize(row.school))).map((cover) => ({
+        id: `cover:${cover.id}`, name: cover.filename, path: "사이트 표지 자료실", size: String(cover.size), modifiedTime: cover.created_at,
+      }));
+      if (savedForSchool.length) materials.cover = savedForSchool;
       const missing = roles.filter((role) => materials[role].length === 0);
       const ambiguous = roles.filter((role) => materials[role].length > 1);
       const questionMaterialsReady = materials.workbook.length === 1 && materials.rete.length === 1;

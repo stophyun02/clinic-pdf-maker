@@ -31,7 +31,7 @@ const defaultScope = `<3주차>
 async function loadPdf(candidate: Candidate, localFiles: Map<string, File>) {
   const local = localFiles.get(candidate.id);
   if (local) return new Uint8Array(await local.arrayBuffer());
-  const response = await fetch(`/api/drive/file?id=${encodeURIComponent(candidate.id)}`);
+  const response = await fetch(candidate.id.startsWith("cover:") ? `/api/drive/covers?id=${encodeURIComponent(candidate.id.slice(6))}` : `/api/drive/file?id=${encodeURIComponent(candidate.id)}`);
   if (!response.ok) throw new Error(`${candidate.name}을 불러오지 못했습니다.`);
   return new Uint8Array(await response.arrayBuffer());
 }
@@ -94,7 +94,7 @@ export default function DriveMaker() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "표지 저장에 실패했습니다.");
       setCovers((current) => [payload.cover, ...current.filter((item) => item.id !== payload.cover.id)]);
-      setCoverMessage(`${payload.cover.name}을 Drive에 저장했습니다.`);
+      setCoverMessage(`${payload.cover.name}을 비공개 표지 자료실에 저장했습니다.`);
     } catch (reason) { setCoverMessage(reason instanceof Error ? reason.message : "표지 저장에 실패했습니다."); }
     finally { setCoverBusy(false); }
   }
@@ -219,12 +219,12 @@ export default function DriveMaker() {
     <section className="coverLibrary">
       <div>
         <p className="stepLabel">표지 자료실</p>
-        <h3>학교별 표지를 Drive에 계속 보관하세요</h3>
-        <p>파일명에 학교명과 주차를 넣으면 제작할 때 더 정확하게 찾습니다.</p>
+        <h3>학교별 표지를 사이트에 계속 보관하세요</h3>
+        <p>Drive는 읽기 전용으로 유지합니다. 파일명에 학교명과 주차를 넣으면 제작할 때 더 정확하게 찾습니다.</p>
       </div>
       <label className={`coverUploader ${coverBusy ? "busy" : ""}`}>
         <input type="file" accept="application/pdf" disabled={coverBusy} onChange={(event) => { const file = event.target.files?.[0]; if (file) void saveCover(file); event.target.value = ""; }} />
-        <strong>{coverBusy ? "Drive에 저장 중…" : "표지 PDF 저장"}</strong>
+        <strong>{coverBusy ? "비공개 저장 중…" : "표지 PDF 저장"}</strong>
       </label>
       <div className="savedCovers">
         <span>저장된 표지 {covers.length}개</span>
