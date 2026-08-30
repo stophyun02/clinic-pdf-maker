@@ -14,6 +14,8 @@ type Job = {
   checks: { label: string; state: string }[]; note: string;
 };
 type Plan = { scannedAt: string; fileCount: number; week: string; counts: Record<Status, number>; jobs: Job[] };
+type InventoryRole = Role | "unclassified";
+type InventoryFile = { id: string; name: string; path: string; role: InventoryRole; reason: string; size?: string; modifiedTime?: string };
 
 const roleName: Record<Role, string> = { workbook: "워크북", workbookAnswer: "워크북 정답", rete: "리테", reteAnswer: "리테 정답", cover: "표지" };
 const statusMeta: Record<Status, { label: string; description: string }> = {
@@ -27,6 +29,17 @@ const defaultScope = `<3주차>
 강동고1: 25년 10월 모의고사 24번, 29번, 32번
 배재고1: 공통영어2 능률(오) 2과
 한영고1: 마더텅 11강 20~40번 (영작배열 제외)`;
+
+function inventoryRole(name: string): { role: InventoryRole; reason: string } {
+  const value = name.normalize("NFKC").toLowerCase();
+  if (!value.endsWith(".pdf")) return { role: "unclassified", reason: "PDF가 아님" };
+  const answer = value.includes("정답") || value.includes("answer");
+  const rete = value.includes("리테") || value.includes("리뷰테스트") || value.includes("review");
+  if (value.includes("표지")) return { role: "cover", reason: "파일명에 ‘표지’ 포함" };
+  if (rete) return { role: answer ? "reteAnswer" : "rete", reason: answer ? "리테/리뷰 + 정답" : "리테/리뷰 문구" };
+  if (value.includes("워크북") || value.includes("내지")) return { role: answer ? "workbookAnswer" : "workbook", reason: answer ? "워크북/내지 + 정답" : "워크북/내지 문구" };
+  return { role: "unclassified", reason: "분류 키워드 없음" };
+}
 
 async function loadPdf(candidate: Candidate, localFiles: Map<string, File>) {
   const local = localFiles.get(candidate.id);
@@ -77,6 +90,10 @@ export default function DriveMaker() {
   const [covers, setCovers] = useState<{ id: string; name: string; size?: string; modifiedTime?: string }[]>([]);
   const [coverBusy, setCoverBusy] = useState(false);
   const [coverMessage, setCoverMessage] = useState("");
+  const [inventory, setInventory] = useState<InventoryFile[]>([]);
+  const [inventoryBusy, setInventoryBusy] = useState(false);
+  const [inventoryProgress, setInventoryProgress] = useState("");
+  const [inventoryFilter, setInventoryFilter] = useState<"all" | InventoryRole>("all");
   const localFileMap = useMemo(() => new Map(localUploads.map((file, index) => [`local:${index}`, file])), [localUploads]);
   const visibleJobs = useMemo(() => plan?.jobs.filter((job) => filter === "all" || job.status === filter) ?? [], [plan, filter]);
   const buildableCount = useMemo(() => plan?.jobs.filter((job) => job.status === "ready" || job.status === "questionReady").length ?? 0, [plan]);
@@ -97,6 +114,40 @@ export default function DriveMaker() {
       setCoverMessage(`${payload.cover.name}을 비공개 표지 자료실에 저장했습니다.`);
     } catch (reason) { setCoverMessage(reason instanceof Error ? reason.message : "표지 저장에 실패했습니다."); }
     finally { setCoverBusy(false); }
+  }
+
+  async function scanInventory() {
+    setInventoryBusy(true); setInventory([]); setInventoryProgress("최상위 자료실을 확인하고 있습니다…");
+    try {
+      const rootResponse = await fetch("/api/drive/browse");
+      const rootPayload = await rootResponse.json();
+      if (!rootResponse.ok) throw new Error(rootPayload.error ?? "자료실을 읽지 못했습니다.");
+      const queue: { id: string; path: string }[] = rootPayload.roots.map((root: { id: string; name: string }) => ({ id: root.id, path: root.name }));
+      const found: InventoryFile[] = [];
+      let folders = 0;
+      while (queue.length && folders < 500) {
+        const folder = queue.shift()!;
+        const response = await fetch(`/api/drive/browse?folderId=${encodeURIComponent(folder.id)}`);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error ?? "Drive 폴더를 읽지 못했습니다.");
+        folders += 1;
+        for (const item of payload.items as { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }[]) {
+          const path = `${folder.path}/${item.name}`;
+          if (item.mimeType === "application/vnd.google-apps.folder") queue.push({ id: item.id, path });
+          else if (item.mimeType === "application/pdf" || item.name.toLowerCase().endsWith(".pdf")) {
+            const classified = inventoryRole(item.name);
+            found.push({ id: item.id, name: item.name, path, ...classified, size: item.size, modifiedTime: item.modifiedTime });
+          }
+        }
+        if (folders % 3 === 0 || !queue.length) {
+          setInventory([...found]);
+          setInventoryProgress(`폴더 ${folders}개 확인 · PDF ${found.length}개 분류`);
+        }
+      }
+      setInventory(found);
+      setInventoryProgress(`분류 완료 · 폴더 ${folders}개 · PDF ${found.length}개`);
+    } catch (reason) { setInventoryProgress(reason instanceof Error ? reason.message : "자료 분류에 실패했습니다."); }
+    finally { setInventoryBusy(false); }
   }
 
   function localRole(file: File): Role | null {
@@ -232,6 +283,31 @@ export default function DriveMaker() {
         {!covers.length && <small>아직 저장된 표지가 없습니다.</small>}
       </div>
       {coverMessage && <p className="coverMessage">{coverMessage}</p>}
+    </section>
+
+    <section className="inventoryPanel">
+      <div className="inventoryHeader">
+        <div><p className="stepLabel">자료 분류현황</p><h3>파일별 자동 분류 결과</h3><p>파일명과 저장 위치를 기준으로 현재 프로그램이 어떻게 판단하는지 보여줍니다.</p></div>
+        <button disabled={inventoryBusy || !connection?.connected} onClick={scanInventory}>{inventoryBusy ? "분류 중…" : inventory.length ? "최신 상태로 다시 분류" : "Drive 자료 분류하기"}</button>
+      </div>
+      {(inventory.length > 0 || inventoryBusy) && <>
+        <div className="inventoryProgress">{inventoryBusy && <i />} {inventoryProgress}</div>
+        <div className="inventoryFilters">
+          <button className={inventoryFilter === "all" ? "active" : ""} onClick={() => setInventoryFilter("all")}>전체 {inventory.length}</button>
+          {([...Object.keys(roleName), "unclassified"] as InventoryRole[]).map((role) => {
+            const count = inventory.filter((file) => file.role === role).length;
+            return <button className={inventoryFilter === role ? "active" : ""} key={role} onClick={() => setInventoryFilter(role)}>{role === "unclassified" ? "미분류" : roleName[role]} {count}</button>;
+          })}
+        </div>
+        <div className="inventoryList">
+          {inventory.filter((file) => inventoryFilter === "all" || file.role === inventoryFilter).slice(0, 300).map((file) => <div className={file.role === "unclassified" ? "unclassified" : ""} key={file.id}>
+            <span>{file.role === "unclassified" ? "미분류" : roleName[file.role]}</span>
+            <p><strong>{file.name}</strong><small>{file.path}</small></p>
+            <b>{file.reason}</b>
+          </div>)}
+        </div>
+      </>}
+      {!inventory.length && !inventoryBusy && <div className="inventoryEmpty">버튼을 누르면 Drive의 최신 파일을 폴더별로 읽어 분류합니다.</div>}
     </section>
 
     <section className="scopeWorkspace">

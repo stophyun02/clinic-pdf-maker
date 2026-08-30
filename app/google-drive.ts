@@ -87,6 +87,28 @@ export async function checkDriveRoots() {
   return roots;
 }
 
+export async function listDriveFolder(id: string) {
+  if (!/^[A-Za-z0-9_-]{10,}$/.test(id)) throw new Error("잘못된 Drive 폴더 식별자입니다.");
+  const output: Omit<DriveFile, "path">[] = [];
+  let pageToken = "";
+  do {
+    const params = new URLSearchParams({
+      q: `'${id}' in parents and trashed=false`,
+      fields: "nextPageToken,files(id,name,mimeType,parents,size,modifiedTime)",
+      pageSize: "1000",
+      supportsAllDrives: "true",
+      includeItemsFromAllDrives: "true",
+    });
+    if (pageToken) params.set("pageToken", pageToken);
+    const response = await driveFetch(`files?${params}`);
+    if (!response.ok) throw new Error("Drive 폴더 목록을 읽지 못했습니다.");
+    const payload = await response.json<{ nextPageToken?: string; files: Omit<DriveFile, "path">[] }>();
+    output.push(...payload.files);
+    pageToken = payload.nextPageToken ?? "";
+  } while (pageToken);
+  return output;
+}
+
 async function driveFetch(path: string, init: RequestInit = {}, base = "https://www.googleapis.com/drive/v3/") {
   const settings = config();
   if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
