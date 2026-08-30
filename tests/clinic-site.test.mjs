@@ -4,11 +4,14 @@ import test from "node:test";
 
 const root = new URL("../", import.meta.url);
 
-test("exposes the three clinic workflows", async () => {
-  const page = await readFile(new URL("app/page.tsx", root), "utf8");
-  assert.match(page, /직접 업로드/);
-  assert.match(page, /한영고/);
-  assert.match(page, /Drive 자동 제작/);
+test("exposes one unified clinic workflow", async () => {
+  const [page, maker] = await Promise.all([
+    readFile(new URL("app/page.tsx", root), "utf8"),
+    readFile(new URL("app/drive-maker.tsx", root), "utf8"),
+  ]);
+  assert.match(page, /클리닉 제작실/);
+  assert.match(maker, /Drive 자료와 직접 올린 파일을 함께 확인합니다/);
+  assert.match(maker, /보충 PDF 선택/);
 });
 
 test("stops unsafe Drive jobs instead of guessing", async () => {
@@ -19,7 +22,7 @@ test("stops unsafe Drive jobs instead of guessing", async () => {
   assert.match(planner, /"missing"/);
   assert.match(planner, /"ambiguous"/);
   assert.match(planner, /"review"/);
-  assert.match(maker, /filter\(\(item\) => item\.status === "ready"\)/);
+  assert.match(maker, /item\.status === "ready" \|\| item\.status === "questionReady"/);
   assert.match(maker, /자료현황\.csv/);
 });
 

@@ -1,15 +1,42 @@
 @import "tailwindcss";
 
-:root { --ink:#18202b; --muted:#667085; --blue:#2474b5; --line:#d9e2ea; --paper:#fbfaf7; }
+:root { --ink:#142436; --muted:#667586; --blue:#236da5; --navy:#123b5b; --aqua:#dff2f3; --line:#d8e3e9; --paper:#f5f7f6; --white:#fff; --green:#25704a; --amber:#946716; --red:#a54135; }
 * { box-sizing:border-box; }
-body { margin:0; background:var(--paper); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; }
+body { margin:0; background:linear-gradient(180deg,#eef6f5 0,#f7f8f6 320px); color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif; }
 button,input { font:inherit; }
-.shell { width:min(1040px,calc(100% - 36px)); margin:0 auto; padding:30px 0 64px; }
-.topbar { display:flex; align-items:center; gap:14px; padding-bottom:24px; border-bottom:1px solid var(--line); }
-.brandMark { width:48px; height:48px; display:grid; place-items:center; border-radius:14px; background:var(--blue); color:white; font-size:26px; font-weight:800; }
+.shell { width:min(1180px,calc(100% - 36px)); margin:0 auto; padding:24px 0 72px; }
+.topbar { display:flex; align-items:center; gap:14px; padding:4px 0 22px; border-bottom:1px solid #ccdcdf; }
+.brandMark { width:46px; height:46px; display:grid; place-items:center; border-radius:14px; background:var(--navy); color:white; font-size:24px; font-weight:800; box-shadow:0 10px 24px #123b5b24; }
 .eyebrow,.stepLabel { margin:0 0 4px; color:var(--blue); font-size:12px; font-weight:800; letter-spacing:.14em; }
 h1 { margin:0; font-size:20px; }
-.privacyBadge { margin-left:auto; padding:8px 12px; background:#eaf7ef; color:#267044; border-radius:999px; font-size:13px; font-weight:700; }
+.privacyBadge { margin-left:auto; padding:8px 12px; background:#e4f1eb; color:#267044; border-radius:999px; font-size:13px; font-weight:700; }
+
+.workspaceIntro{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(420px,1fr);gap:44px;align-items:end;padding:54px 0 28px}
+.workspaceIntro h2{margin:8px 0 16px;font-size:clamp(38px,5.6vw,67px);line-height:1.05;letter-spacing:-.055em}
+.workflowStrip{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.workflowStrip span{display:flex;align-items:center;gap:10px;padding:17px 18px;border:1px solid #cedde2;border-radius:15px;background:#ffffffb8;color:#385467;font-size:13px;font-weight:800;backdrop-filter:blur(10px)}
+.workflowStrip b{color:#2792a0;font-size:11px;letter-spacing:.08em}
+.connectionBar{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:13px;padding:15px 18px;border:1px solid #cfe0df;border-radius:15px;background:#f9fcfb}
+.connectionBar strong{display:block;margin-bottom:3px}.connectionBar p{margin:0;color:#718392;font-size:12px}
+.connectionBar button,.secondaryButton{border:1px solid #c7d9df;border-radius:10px;padding:9px 12px;background:white;color:#315f78;font-size:12px;font-weight:800;cursor:pointer}
+.sourcePanel{display:grid;grid-template-columns:1fr 1fr;gap:26px;align-items:center;margin-top:14px;padding:20px 22px;border:1px solid #d6e2e5;border-radius:18px;background:#fff}
+.sourcePanel h3{margin:4px 0 7px;font-size:17px}.sourcePanel p{margin:0;color:#71808d;font-size:12px;line-height:1.55}
+.inlineUploader{position:relative;display:flex;min-width:0;flex-direction:column;gap:5px;padding:15px 17px;border:1.5px dashed #80afbd;border-radius:13px;background:#f2faf9;cursor:pointer}
+.inlineUploader input{position:absolute;inset:0;opacity:0;cursor:pointer}.inlineUploader strong{color:#226277;font-size:13px}.inlineUploader span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#788b96;font-size:11px}
+.scopeWorkspace,.reviewWorkspace{margin-top:16px;padding:25px;border:1px solid #d5e1e5;border-radius:20px;background:#fff;box-shadow:0 16px 48px #173c5c0c}
+.scopeWorkspace textarea{width:100%;min-height:154px;resize:vertical;padding:17px;border:1px solid #cbdce1;border-radius:13px;background:#fbfdfd;color:#243847;font:500 14px/1.75 -apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;outline:none}
+.scopeWorkspace textarea:focus{border-color:#438aa0;box-shadow:0 0 0 3px #3a8a9d15}
+.scopeActions{display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:13px}.scopeActions p{margin:0;color:#7a8994;font-size:11px}.scopeActions button,.finalizePanel>button{border:0;border-radius:12px;padding:13px 20px;background:var(--navy);color:#fff;font-weight:850;cursor:pointer}.scopeActions button:disabled,.finalizePanel>button:disabled{background:#aebbc1}
+.reviewHeading{display:flex;align-items:end;justify-content:space-between;gap:20px}.reviewHeading h3{margin:4px 0 5px;font-size:25px}.reviewHeading>div>p:last-child{margin:0;color:#82909a;font-size:11px}
+.summaryGrid{display:grid;grid-template-columns:repeat(6,1fr);gap:9px;margin:20px 0}
+.summaryGrid button{display:flex;flex-direction:column;gap:4px;align-items:flex-start;padding:14px;border:1px solid #dbe5e8;border-radius:13px;background:#fafcfc;color:#667784;cursor:pointer}.summaryGrid strong{color:#243e51;font-size:22px}.summaryGrid span{font-size:11px;font-weight:800}.summaryGrid button.selected{border-color:#2d8293;background:#ebf7f6;box-shadow:0 0 0 2px #2d829315}.summaryGrid .ready strong{color:var(--green)}.summaryGrid .questionReady strong,.summaryGrid .review strong{color:var(--amber)}.summaryGrid .missing strong,.summaryGrid .ambiguous strong{color:var(--red)}
+.jobList{display:grid;gap:12px}.jobCard{overflow:hidden;border:1px solid #dbe4e7;border-radius:16px;background:#fcfdfd}.jobCard>header{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:15px 17px;border-bottom:1px solid #e3ebed;background:#f9fbfb}.schoolIdentity{display:flex;align-items:center;min-width:0;gap:13px}.schoolIdentity>span{display:grid;width:34px;height:34px;place-items:center;border-radius:10px;background:#e3eff1;color:#256b78;font-size:11px;font-weight:900}.schoolIdentity div{min-width:0}.schoolIdentity h4{margin:0 0 4px;font-size:16px}.schoolIdentity p{margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#627786;font-size:12px}.statusPill{flex:0 0 auto;padding:7px 10px;border-radius:999px;background:#e8f4ed;color:var(--green);font-size:11px;font-weight:900}.jobCard.questionReady .statusPill,.jobCard.review .statusPill{background:#fff5dd;color:var(--amber)}.jobCard.missing .statusPill,.jobCard.ambiguous .statusPill{background:#ffefed;color:var(--red)}
+.jobBody{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.55fr);gap:0}.materialTable{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:1px;background:#e5edef}.materialTable>div{min-width:0;padding:13px;background:#fff}.materialTable span{display:block;margin-bottom:7px;color:#718491;font-size:10px;font-weight:800}.materialTable strong{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#425b6b;font-size:11px}.materialTable .empty strong{color:var(--red)}.materialTable .warn strong{color:var(--amber)}
+.jobBody aside{padding:14px 16px;border-left:1px solid #e2eaec;background:#fbfcfc}.jobBody aside>p{margin:0 0 10px;color:#637581;font-size:11px;line-height:1.5}.checkChips{display:flex;flex-wrap:wrap;gap:5px}.checkChips span{display:flex;gap:5px;padding:5px 7px;border-radius:7px;background:#eef3f4;color:#637580;font-size:9px}.checkChips b{color:#2f6f53}.checkChips .review b,.checkChips .warn b,.checkChips .include b{color:#9a6a17}.checkChips .fail b{color:#ac4135}
+.finalizePanel{display:grid;grid-template-columns:1fr auto auto;align-items:center;gap:22px;margin-top:18px;padding:20px;border-radius:16px;background:#133c5a;color:white}.finalizePanel h3{margin:4px 0 5px}.finalizePanel p{margin:0;color:#c5d5df;font-size:11px}.finalizePanel .stepLabel{color:#7fd0d2}.finalizePanel label{display:flex;align-items:center;gap:8px;font-size:11px;font-weight:700}.finalizePanel input{width:17px;height:17px;accent-color:#43a9a9}.finalizePanel>button{background:#58b1af;color:#092d3f}.emptyState{padding:38px;text-align:center;color:#7b8d98}
+.preserveLines{white-space:pre-line}
+@media(max-width:900px){.workspaceIntro{grid-template-columns:1fr}.sourcePanel{grid-template-columns:1fr}.summaryGrid{grid-template-columns:repeat(3,1fr)}.jobBody{grid-template-columns:1fr}.jobBody aside{border-left:0;border-top:1px solid #e2eaec}.materialTable{grid-template-columns:repeat(2,1fr)}.finalizePanel{grid-template-columns:1fr}.reviewHeading{align-items:flex-start;flex-direction:column}}
+@media(max-width:620px){.workspaceIntro{padding-top:38px}.workflowStrip{grid-template-columns:1fr 1fr}.connectionBar{grid-template-columns:auto 1fr}.connectionBar button{grid-column:1/-1}.scopeHeader,.scopeActions{align-items:flex-start;flex-direction:column}.summaryGrid{grid-template-columns:repeat(2,1fr)}.materialTable{grid-template-columns:1fr}.shell{width:min(100% - 22px,1180px)}}
 .hero { display:grid; grid-template-columns:1.25fr 1fr; gap:38px; align-items:end; padding:62px 0 44px; }
 h2 { margin:8px 0 18px; font-size:clamp(34px,5vw,58px); line-height:1.12; letter-spacing:-.045em; }
 .heroCopy { max-width:580px; margin:0; color:var(--muted); line-height:1.7; }
