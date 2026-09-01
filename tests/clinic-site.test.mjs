@@ -22,7 +22,9 @@ test("stops unsafe Drive jobs instead of guessing", async () => {
   assert.match(planner, /"missing"/);
   assert.match(planner, /"ambiguous"/);
   assert.match(planner, /"review"/);
-  assert.match(maker, /item\.status === "ready" \|\| item\.status === "questionReady"/);
+  assert.match(maker, /plan\.jobs\.filter\(jobCanBuild\)/);
+  assert.match(maker, /rangeConfirmed/);
+  assert.match(maker, /selectedCandidate\(job, "workbook"\)/);
   assert.match(maker, /자료현황\.csv/);
 });
 

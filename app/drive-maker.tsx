@@ -14,6 +14,18 @@ type Job = {
   checks: { label: string; state: string }[]; note: string;
 };
 type Plan = { scannedAt: string; fileCount: number; week: string; counts: Record<Status, number>; jobs: Job[] };
+type JobChoice = {
+  scope: string;
+  selected: Partial<Record<Role, string>>;
+  includeC1: boolean;
+  includeRete: boolean;
+  includeC2: boolean;
+  includeAnswers: boolean;
+  includeCover: boolean;
+  excludeFurther: boolean;
+  allowQuestionOnly: boolean;
+  rangeConfirmed: boolean;
+};
 type InventoryRole = Role | "unclassified";
 type InventoryFile = { id: string; name: string; path: string; role: InventoryRole; reason: string; size?: string; modifiedTime?: string };
 
@@ -107,9 +119,42 @@ export default function DriveMaker() {
   const [inventoryBusy, setInventoryBusy] = useState(false);
   const [inventoryProgress, setInventoryProgress] = useState("");
   const [inventoryFilter, setInventoryFilter] = useState<"all" | InventoryRole>("all");
+  const [choices, setChoices] = useState<Record<number, JobChoice>>({});
+  const [outputMode, setOutputMode] = useState<"combined" | "separate">("combined");
   const localFileMap = useMemo(() => new Map(localUploads.map((file, index) => [`local:${index}`, file])), [localUploads]);
   const visibleJobs = useMemo(() => plan?.jobs.filter((job) => filter === "all" || job.status === filter) ?? [], [plan, filter]);
-  const buildableCount = useMemo(() => plan?.jobs.filter((job) => job.status === "ready" || job.status === "questionReady").length ?? 0, [plan]);
+  const selectedCandidate = (job: Job, role: Role) => {
+    const id = choices[job.id]?.selected[role];
+    return job.materials[role].find((candidate) => candidate.id === id);
+  };
+  const jobCanBuild = (job: Job) => {
+    const choice = choices[job.id];
+    if (!choice?.rangeConfirmed || !choice.includeC1 || !choice.includeRete) return false;
+    if (!selectedCandidate(job, "workbook") || !selectedCandidate(job, "rete")) return false;
+    if (choice.includeAnswers && !choice.allowQuestionOnly && (!selectedCandidate(job, "workbookAnswer") || !selectedCandidate(job, "reteAnswer"))) return false;
+    return true;
+  };
+  const buildableCount = useMemo(() => plan?.jobs.filter(jobCanBuild).length ?? 0, [plan, choices]);
+
+  function defaultChoices(payload: Plan) {
+    return Object.fromEntries(payload.jobs.map((job) => [job.id, {
+      scope: job.scope,
+      selected: Object.fromEntries((Object.keys(roleName) as Role[]).map((role) => [role, job.materials[role].length === 1 ? job.materials[role][0].id : ""])),
+      includeC1: true,
+      includeRete: true,
+      includeC2: !job.options.excludeC2,
+      includeAnswers: true,
+      includeCover: true,
+      excludeFurther: job.options.excludeFurther,
+      allowQuestionOnly: true,
+      rangeConfirmed: false,
+    }])) as Record<number, JobChoice>;
+  }
+
+  function updateChoice(jobId: number, patch: Partial<JobChoice>) {
+    setChoices((current) => ({ ...current, [jobId]: { ...current[jobId], ...patch } }));
+    setConfirmed(false);
+  }
 
   useEffect(() => {
     apiJson<{ connected: boolean; fileCount: number; pdfCount?: number; rootCount?: number; rootNames?: string[]; error?: string }>("/api/drive/status")
@@ -202,6 +247,7 @@ export default function DriveMaker() {
       const payload = await apiJson<Plan>("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope }) });
       const merged = mergeLocalFiles(payload);
       setPlan(merged);
+      setChoices(defaultChoices(merged));
       setMessage(`${payload.week} · ${payload.jobs.length}개 학교의 자료 현황을 만들었습니다.`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "자료 검색에 실패했습니다."); }
     finally { setBusy(false); setProgress(""); }
@@ -212,29 +258,35 @@ export default function DriveMaker() {
     setBusy(true); setError(""); setMessage("");
     let completed = 0;
     const failures: string[] = [];
-    for (const job of plan.jobs.filter((item) => item.status === "ready" || item.status === "questionReady")) {
+    for (const job of plan.jobs.filter(jobCanBuild)) {
       try {
         setProgress(`${job.school} PDF 구조를 검증하고 있습니다…`);
-        const one = (role: Role) => job.materials[role][0];
+        const choice = choices[job.id];
+        const one = (role: Role) => selectedCandidate(job, role)!;
         const [wb, rete, cover] = await Promise.all([
-          loadPdf(one("workbook"), localFileMap), loadPdf(one("rete"), localFileMap), one("cover") ? loadPdf(one("cover"), localFileMap) : Promise.resolve(null),
+          loadPdf(one("workbook"), localFileMap), loadPdf(one("rete"), localFileMap), choice.includeCover && selectedCandidate(job, "cover") ? loadPdf(one("cover"), localFileMap) : Promise.resolve(null),
         ]);
         const analysis = await analyzeWorkbook(wb);
-        const lesson = Number(job.scope.match(/(\d+)\s*과/)?.[1] ?? 1);
+        const lesson = Number(choice.scope.match(/(\d+)\s*과/)?.[1] ?? 1);
         if (!analysis.c1Groups.length || lesson > analysis.c1Groups.length) throw new Error("요청 범위와 워크북 문장배열 구조가 일치하지 않습니다.");
-        const includeC2 = !job.options.excludeC2 && analysis.c2Groups.length > 0;
+        const includeC2 = choice.includeC2 && analysis.c2Groups.length > 0;
         const question = await buildClinicPdf(wb, rete, analysis, lesson, "all", includeC2);
         let answer: Uint8Array | undefined;
-        if (job.status === "ready") {
+        if (choice.includeAnswers && selectedCandidate(job, "workbookAnswer") && selectedCandidate(job, "reteAnswer")) {
           const [wa, reteAnswer] = await Promise.all([loadPdf(one("workbookAnswer"), localFileMap), loadPdf(one("reteAnswer"), localFileMap)]);
           const answerAnalysis = await analyzeAnswerWorkbook(wa);
           if (!answerAnalysis.c1Sections.length) throw new Error("워크북 정답에서 문장배열 정답을 찾지 못했습니다.");
           if (includeC2 && !answerAnalysis.c2Sections.length) throw new Error("영작배열 정답이 부족합니다.");
           answer = await buildClinicAnswerPdf(wa, reteAnswer, answerAnalysis, lesson, "all", includeC2);
         }
-        const final = await assemble(cover, question, answer);
-        const suffix = answer ? "완성본" : "문제지";
-        save(final, `${plan.week}_${job.school}클리닉_${suffix}.pdf`);
+        if (outputMode === "separate" && answer) {
+          save(await assemble(cover, question), `${plan.week}_${job.school}클리닉_문제지.pdf`);
+          save(answer, `${plan.week}_${job.school}클리닉_정답지.pdf`);
+        } else {
+          const final = await assemble(cover, question, answer);
+          const suffix = answer ? "완성본" : "문제지";
+          save(final, `${plan.week}_${job.school}클리닉_${suffix}.pdf`);
+        }
         completed += 1;
       } catch (reason) { failures.push(`${job.school}: ${reason instanceof Error ? reason.message : "생성 실패"}`); }
     }
@@ -332,7 +384,7 @@ export default function DriveMaker() {
 
     {plan && <section className="reviewWorkspace">
       <div className="reviewHeading">
-        <div><p className="stepLabel">2. 제작 전 검수</p><h3>{plan.week} 작업 현황</h3><p>{new Date(plan.scannedAt).toLocaleString("ko-KR")} 기준 · Drive {plan.fileCount}개 파일 검색</p></div>
+        <div><p className="stepLabel">2. 학교별 변수 선택</p><h3>{plan.week} 작업 설정</h3><p>자동 분석값을 확인하고 학교별 편집 조건을 선택하세요.</p></div>
         <button className="secondaryButton" onClick={() => reportCsv(plan)}>부족 자료 보고서</button>
       </div>
       <div className="summaryGrid">
@@ -344,12 +396,30 @@ export default function DriveMaker() {
           <div className="schoolIdentity"><span>{String(job.id).padStart(2, "0")}</span><div><h4>{job.school}</h4><p>{job.scope}</p></div></div>
           <div className="statusPill">{statusMeta[job.status].label}</div>
         </header>
+        {choices[job.id] && <div className="variableEditor">
+          <label className="rangeField"><span>적용 범위</span><input value={choices[job.id].scope} onChange={(event) => updateChoice(job.id, { scope: event.target.value, rangeConfirmed: false })} /></label>
+          <div className="variableChecks" aria-label={`${job.school} 편집 요소`}>
+            <label title="클리닉의 필수 구성입니다"><input type="checkbox" checked disabled readOnly />문장배열 (필수)</label>
+            <label title="클리닉의 필수 구성입니다"><input type="checkbox" checked disabled readOnly />리테 (필수)</label>
+            <label><input type="checkbox" checked={choices[job.id].includeC2} onChange={(event) => updateChoice(job.id, { includeC2: event.target.checked })} />영작배열</label>
+            <label><input type="checkbox" checked={choices[job.id].includeAnswers} onChange={(event) => updateChoice(job.id, { includeAnswers: event.target.checked })} />정답지</label>
+            <label><input type="checkbox" checked={choices[job.id].includeCover} onChange={(event) => updateChoice(job.id, { includeCover: event.target.checked })} />표지</label>
+            <label><input type="checkbox" checked={choices[job.id].excludeFurther} onChange={(event) => updateChoice(job.id, { excludeFurther: event.target.checked })} />Further Reading 제외</label>
+          </div>
+          <div className="decisionRow">
+            <label><input type="checkbox" checked={choices[job.id].allowQuestionOnly} onChange={(event) => updateChoice(job.id, { allowQuestionOnly: event.target.checked })} />정답 자료가 부족하면 문제지만 생성</label>
+            <label className={choices[job.id].rangeConfirmed ? "confirmed" : "needsConfirm"}><input type="checkbox" checked={choices[job.id].rangeConfirmed} onChange={(event) => updateChoice(job.id, { rangeConfirmed: event.target.checked })} />이 학교의 범위·예외 확인 완료</label>
+          </div>
+        </div>}
         <div className="jobBody">
           <div className="materialTable">{(Object.keys(roleName) as Role[]).map((role) => {
             const candidates = job.materials[role];
             return <div className={candidates.length === 1 ? "found" : candidates.length > 1 ? "warn" : "empty"} key={role}>
               <span>{roleName[role]}</span>
-              <strong title={candidates[0]?.path}>{candidates.length === 1 ? candidates[0].name : candidates.length > 1 ? `후보 ${candidates.length}개` : "자료 없음"}</strong>
+              {candidates.length ? <select aria-label={`${job.school} ${roleName[role]} 선택`} value={choices[job.id]?.selected[role] ?? ""} onChange={(event) => updateChoice(job.id, { selected: { ...choices[job.id].selected, [role]: event.target.value } })}>
+                <option value="">{candidates.length > 1 ? `후보 ${candidates.length}개 중 선택` : "사용하지 않음"}</option>
+                {candidates.map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.name}</option>)}
+              </select> : <strong>자료 없음</strong>}
             </div>;
           })}</div>
           <aside>
@@ -360,7 +430,8 @@ export default function DriveMaker() {
       </article>)}</div>
       {visibleJobs.length === 0 && <div className="emptyState">이 상태에 해당하는 학교가 없습니다.</div>}
       <div className="finalizePanel">
-        <div><p className="stepLabel">3. 최종 제작</p><h3>자동 제작 가능한 {buildableCount}개 학교</h3><p>완성본은 표지 → 문장배열 → 리테 → 영작배열 → 정답지 → 마지막표지 순서로 구성됩니다.</p></div>
+        <div><p className="stepLabel">4. 최종 제작</p><h3>선택 완료된 {buildableCount}개 학교</h3><p>확인하지 않은 학교와 필수 자료가 부족한 학교는 자동으로 제외합니다.</p></div>
+        <label className="outputChoice"><span>결과물</span><select value={outputMode} onChange={(event) => setOutputMode(event.target.value as "combined" | "separate")}><option value="combined">문제·정답 합본</option><option value="separate">문제지·정답지 별도</option></select></label>
         <label><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} /><span>범위와 자료 현황을 확인했습니다</span></label>
         <button disabled={busy || !confirmed || buildableCount === 0} onClick={generateBuildable}>{busy ? "제작 중…" : `검증된 ${buildableCount}개 PDF 만들기`}</button>
       </div>
