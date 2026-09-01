@@ -64,7 +64,7 @@ test("lets users select a Drive workbook after choosing grade and school", async
     readFile(new URL("app/api/drive/plan/route.ts", root), "utf8"),
     readFile(new URL("app/api/drive/materials/route.ts", root), "utf8"),
   ]);
-  assert.match(maker, /학년·학교로 찾기/);
+  assert.match(maker, /빠르게 찾기/);
   assert.match(maker, /selectedWorkbookId/);
   assert.match(maker, /selectedMaterials/);
   assert.match(maker, /선택 교재·범위로 찾기/);
@@ -73,4 +73,17 @@ test("lets users select a Drive workbook after choosing grade and school", async
   assert.match(materials, /리테모음/);
   assert.match(materials, /workbookAnswers/);
   assert.match(materials, /reteAnswers/);
+});
+
+test("reuses a persisted Drive index and offers an explicit refresh", async () => {
+  const [drive, maker] = await Promise.all([
+    readFile(new URL("app/google-drive.ts", root), "utf8"),
+    readFile(new URL("app/drive-maker.tsx", root), "utf8"),
+  ]);
+  assert.match(drive, /DRIVE_INDEX_TTL/);
+  assert.match(drive, /storedDriveIndex/);
+  assert.match(drive, /fileLoadPromise/);
+  assert.match(maker, /빠르게 찾기/);
+  assert.match(maker, /최신 목록 새로고침/);
+  assert.match(maker, /refresh=1/);
 });

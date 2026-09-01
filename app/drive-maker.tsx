@@ -195,11 +195,11 @@ export default function DriveMaker() {
     setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...patch } : draft));
   }
 
-  async function findSchoolWorkbooks(draft: RangeDraft) {
+  async function findSchoolWorkbooks(draft: RangeDraft, force = false) {
     const school = `${draft.school === "직접입력" ? draft.customSchool.trim() : draft.school}${draft.grade}`;
     setWorkbookSearch((current) => ({ ...current, [draft.id]: "Drive에서 찾는 중…" }));
     try {
-      const payload = await apiJson<{ workbooks: Candidate[]; workbookAnswers: Candidate[]; rete: Candidate[]; reteAnswers: Candidate[] }>(`/api/drive/materials?school=${encodeURIComponent(school)}`);
+      const payload = await apiJson<{ workbooks: Candidate[]; workbookAnswers: Candidate[]; rete: Candidate[]; reteAnswers: Candidate[] }>(`/api/drive/materials?school=${encodeURIComponent(school)}${force ? "&refresh=1" : ""}`);
       setWorkbookOptions((current) => ({ ...current, [draft.id]: payload }));
       updateDraft(draft.id, {
         selectedWorkbookId: payload.workbooks.length === 1 ? payload.workbooks[0].id : "", selectedWorkbookName: payload.workbooks.length === 1 ? payload.workbooks[0].name : "",
@@ -494,7 +494,7 @@ export default function DriveMaker() {
         </div>
         <div className="draftGrid rangeFields">
           {draft.sourceType === "textbook" && <>
-            <div className="driveBookPicker materialPicker"><span>① 학교 폴더의 워크북</span><button type="button" onClick={() => void findSchoolWorkbooks(draft)}>학년·학교로 찾기</button>
+            <div className="driveBookPicker materialPicker"><span>① 학교 폴더의 워크북</span><div className="pickerActions"><button type="button" onClick={() => void findSchoolWorkbooks(draft)}>빠르게 찾기</button><button type="button" onClick={() => void findSchoolWorkbooks(draft, true)}>최신 목록 새로고침</button></div>
               <select value={draft.selectedWorkbookId} onChange={(event) => { const candidate = (workbookOptions[draft.id]?.workbooks ?? []).find((item) => item.id === event.target.value); updateDraft(draft.id, { selectedWorkbookId: event.target.value, selectedWorkbookName: candidate?.name ?? "", selectedReteId: "", selectedReteName: "", selectedReteAnswerId: "", selectedReteAnswerName: "", title: "", publisher: "" }); }}><option value="">{workbookSearch[draft.id] || "먼저 Drive에서 찾아주세요"}</option>{(workbookOptions[draft.id]?.workbooks ?? []).map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.name}</option>)}</select>
               <select value={draft.selectedWorkbookAnswerId} onChange={(event) => { const candidate = (workbookOptions[draft.id]?.workbookAnswers ?? []).find((item) => item.id === event.target.value); updateDraft(draft.id, { selectedWorkbookAnswerId: event.target.value, selectedWorkbookAnswerName: candidate?.name ?? "" }); }}><option value="">워크북 정답지 선택</option>{(workbookOptions[draft.id]?.workbookAnswers ?? []).map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.name}</option>)}</select>
               {draft.selectedWorkbookName && <small>내지: {draft.selectedWorkbookName}{draft.selectedWorkbookAnswerName ? ` · 정답: ${draft.selectedWorkbookAnswerName}` : ""}</small>}

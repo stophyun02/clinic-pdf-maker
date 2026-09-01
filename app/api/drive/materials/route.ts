@@ -23,7 +23,7 @@ export async function GET(request: Request) {
     const url = new URL(request.url); const school = url.searchParams.get("school")?.trim() ?? "";
     const workbookId = url.searchParams.get("workbookId")?.trim() ?? ""; const scope = url.searchParams.get("scope")?.trim() ?? "";
     if (!school) return Response.json({ error: "학교와 학년을 먼저 선택해 주세요." }, { status: 400 });
-    const schoolKey = normalize(school); const files = await listDriveFiles();
+    const schoolKey = normalize(school); const files = await listDriveFiles({ force: url.searchParams.get("refresh") === "1" });
     const schoolFiles = files.filter((file) => normalize(file.path).includes(schoolKey));
     const workbooks = schoolFiles.filter((file) => role(file) === "workbook" && normalize(file.path).includes("워크북")).map(candidate);
     const workbookAnswers = schoolFiles.filter((file) => role(file) === "workbookAnswer" && (normalize(file.path).includes("정답") || normalize(file.path).includes("워크북"))).map(candidate);

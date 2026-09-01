@@ -17,6 +17,10 @@ type DriveConfig = {
 };
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
+let fileCache: { files: DriveFile[]; expiresAt: number } | null = null;
+let fileLoadPromise: Promise<DriveFile[]> | null = null;
+const DRIVE_INDEX_KEY = "system/drive-file-index.json";
+const DRIVE_INDEX_TTL = 15 * 60 * 1000;
 
 function config(): DriveConfig | null {
   const values = env as unknown as Record<string, string | undefined>;
@@ -125,7 +129,23 @@ async function driveFetch(path: string, init: RequestInit = {}, base = "https://
   return fetch(`${base}${path}`, { ...init, headers });
 }
 
-export async function listDriveFiles(): Promise<DriveFile[]> {
+async function storedDriveIndex() {
+  const bucket = (env as unknown as { RETE_FILES?: R2Bucket }).RETE_FILES;
+  if (!bucket) return null;
+  const object = await bucket.get(DRIVE_INDEX_KEY);
+  if (!object) return null;
+  const updatedAt = Number(object.customMetadata?.updatedAt ?? 0);
+  if (!updatedAt || Date.now() - updatedAt > DRIVE_INDEX_TTL) return null;
+  return JSON.parse(await object.text()) as DriveFile[];
+}
+
+async function saveDriveIndex(files: DriveFile[]) {
+  const bucket = (env as unknown as { RETE_FILES?: R2Bucket }).RETE_FILES;
+  if (!bucket) return;
+  await bucket.put(DRIVE_INDEX_KEY, JSON.stringify(files), { httpMetadata: { contentType: "application/json" }, customMetadata: { updatedAt: String(Date.now()) } });
+}
+
+async function scanDriveFiles(): Promise<DriveFile[]> {
   const settings = config();
   if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
   const output: DriveFile[] = [];
@@ -153,7 +173,19 @@ export async function listDriveFiles(): Promise<DriveFile[]> {
       pageToken = payload.nextPageToken ?? "";
     } while (pageToken);
   }
+  await saveDriveIndex(output);
   return output;
+}
+
+export async function listDriveFiles(options: { force?: boolean } = {}): Promise<DriveFile[]> {
+  if (!options.force && fileCache && fileCache.expiresAt > Date.now()) return fileCache.files;
+  if (!options.force) {
+    const stored = await storedDriveIndex();
+    if (stored) { fileCache = { files: stored, expiresAt: Date.now() + DRIVE_INDEX_TTL }; return stored; }
+  }
+  if (fileLoadPromise) return fileLoadPromise;
+  fileLoadPromise = scanDriveFiles().then((files) => { fileCache = { files, expiresAt: Date.now() + DRIVE_INDEX_TTL }; return files; }).finally(() => { fileLoadPromise = null; });
+  return fileLoadPromise;
 }
 
 export async function downloadDrivePdf(id: string) {
