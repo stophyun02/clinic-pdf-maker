@@ -66,8 +66,11 @@ test("lets users select a Drive workbook after choosing grade and school", async
   ]);
   assert.match(maker, /학년·학교로 찾기/);
   assert.match(maker, /selectedWorkbookId/);
-  assert.match(maker, /selectedWorkbooks/);
-  assert.match(planner, /선택한 교과서 파일이 현재 학교 자료실과 일치하지 않습니다/);
-  assert.match(materials, /path\.includes\(schoolKey\)/);
-  assert.match(materials, /!answer/);
+  assert.match(maker, /selectedMaterials/);
+  assert.match(maker, /선택 교재·범위로 찾기/);
+  assert.match(planner, /지정된 자료실 경로와 일치하지 않습니다/);
+  assert.match(materials, /schoolFiles/);
+  assert.match(materials, /리테모음/);
+  assert.match(materials, /workbookAnswers/);
+  assert.match(materials, /reteAnswers/);
 });

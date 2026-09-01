@@ -6,6 +6,7 @@ type Candidate = Pick<DriveFile, "id" | "name" | "path" | "size" | "modifiedTime
 
 const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
 const roles: Role[] = ["workbook", "workbookAnswer", "rete", "reteAnswer", "cover"];
+const roleName: Record<Role, string> = { workbook: "워크북", workbookAnswer: "워크북 정답", rete: "리테", reteAnswer: "리테 정답", cover: "표지" };
 
 function parseScope(text: string) {
   let week = "주차 미지정";
@@ -68,18 +69,19 @@ function needsContentReview(scope: string) {
 export async function POST(request: Request) {
   if (!apiAuthorized(request)) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
   try {
-    const { scope, selectedWorkbooks = [] } = await request.json<{ scope?: string; selectedWorkbooks?: { jobId: number; fileId: string }[] }>();
+    const { scope, selectedMaterials = [] } = await request.json<{ scope?: string; selectedMaterials?: { jobId: number; role: Role; fileId: string }[] }>();
     const parsed = parseScope(scope ?? "");
     if (!parsed.jobs.length) return Response.json({ error: "학교별 범위를 한 줄씩 입력해 주세요." }, { status: 400 });
     const files = await listDriveFiles();
     const storedCovers = await listStoredCovers();
     const jobs = parsed.jobs.map((row) => {
       const materials = Object.fromEntries(roles.map((role) => [role, best(files, role, row.school, row.scope)])) as Record<Role, Candidate[]>;
-      const preferred = selectedWorkbooks.find((selection) => selection.jobId === row.id)?.fileId;
-      if (preferred) {
-        const selected = files.find((file) => file.id === preferred && classify(file) === "workbook" && normalize(file.path).includes(normalize(row.school)));
-        if (!selected) throw new Error(`${row.school}: 선택한 교과서 파일이 현재 학교 자료실과 일치하지 않습니다.`);
-        materials.workbook = [{ id: selected.id, name: selected.name, path: selected.path, size: selected.size, modifiedTime: selected.modifiedTime }];
+      for (const selection of selectedMaterials.filter((item) => item.jobId === row.id)) {
+        const selected = files.find((file) => file.id === selection.fileId && classify(file) === selection.role);
+        const schoolRole = selection.role === "workbook" || selection.role === "workbookAnswer";
+        const correctPath = selected && (schoolRole ? normalize(selected.path).includes(normalize(row.school)) : normalize(selected.path).includes("리테모음"));
+        if (!selected || !correctPath) throw new Error(`${row.school}: 선택한 ${roleName[selection.role]} 파일이 지정된 자료실 경로와 일치하지 않습니다.`);
+        materials[selection.role] = [{ id: selected.id, name: selected.name, path: selected.path, size: selected.size, modifiedTime: selected.modifiedTime }];
       }
       const savedForSchool = storedCovers.filter((cover) => normalize(cover.filename).includes(normalize(row.school))).map((cover) => ({
         id: `cover:${cover.id}`, name: cover.filename, path: "사이트 표지 자료실", size: String(cover.size), modifiedTime: cover.created_at,
