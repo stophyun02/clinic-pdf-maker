@@ -28,6 +28,12 @@ type JobChoice = {
 };
 type InventoryRole = Role | "unclassified";
 type InventoryFile = { id: string; name: string; path: string; role: InventoryRole; reason: string; size?: string; modifiedTime?: string };
+type SourceType = "textbook" | "mock" | "supplement" | "custom";
+type RangeDraft = {
+  id: number; grade: "1" | "2"; school: string; customSchool: string; sourceType: SourceType;
+  title: string; publisher: string; lesson: string; year: string; month: string; range: string;
+  excludeC2: boolean; excludeFurther: boolean;
+};
 
 const roleName: Record<Role, string> = { workbook: "워크북", workbookAnswer: "워크북 정답", rete: "리테", reteAnswer: "리테 정답", cover: "표지" };
 const statusMeta: Record<Status, { label: string; description: string }> = {
@@ -37,10 +43,8 @@ const statusMeta: Record<Status, { label: string; description: string }> = {
   missing: { label: "자료 부족", description: "필수 문제 자료가 없습니다." },
   ambiguous: { label: "후보 확인", description: "동일 조건의 파일이 여러 개입니다." },
 };
-const defaultScope = `<3주차>
-강동고1: 25년 10월 모의고사 24번, 29번, 32번
-배재고1: 공통영어2 능률(오) 2과
-한영고1: 마더텅 11강 20~40번 (영작배열 제외)`;
+const schools = ["강동고", "한영고", "배재고", "성덕고", "상일여고", "명일여고", "이대부고", "서울여고", "광성고"];
+const emptyDraft = (id: number): RangeDraft => ({ id, grade: "1", school: "강동고", customSchool: "", sourceType: "textbook", title: "", publisher: "", lesson: "", year: "", month: "", range: "", excludeC2: false, excludeFurther: false });
 
 function inventoryRole(name: string): { role: InventoryRole; reason: string } {
   const value = name.normalize("NFKC").toLowerCase();
@@ -102,7 +106,7 @@ function reportCsv(plan: Plan) {
 }
 
 export default function DriveMaker() {
-  const [scope, setScope] = useState(defaultScope);
+  const [scope, setScope] = useState("");
   const [connection, setConnection] = useState<{ connected: boolean; fileCount: number; pdfCount?: number; rootCount?: number; rootNames?: string[]; error?: string } | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [busy, setBusy] = useState(false);
@@ -121,6 +125,8 @@ export default function DriveMaker() {
   const [inventoryFilter, setInventoryFilter] = useState<"all" | InventoryRole>("all");
   const [choices, setChoices] = useState<Record<number, JobChoice>>({});
   const [outputMode, setOutputMode] = useState<"combined" | "separate">("combined");
+  const [weekNumber, setWeekNumber] = useState("2");
+  const [drafts, setDrafts] = useState<RangeDraft[]>([emptyDraft(1)]);
   const localFileMap = useMemo(() => new Map(localUploads.map((file, index) => [`local:${index}`, file])), [localUploads]);
   const visibleJobs = useMemo(() => plan?.jobs.filter((job) => filter === "all" || job.status === filter) ?? [], [plan, filter]);
   const selectedCandidate = (job: Job, role: Role) => {
@@ -154,6 +160,32 @@ export default function DriveMaker() {
   function updateChoice(jobId: number, patch: Partial<JobChoice>) {
     setChoices((current) => ({ ...current, [jobId]: { ...current[jobId], ...patch } }));
     setConfirmed(false);
+  }
+
+  function updateDraft(id: number, patch: Partial<RangeDraft>) {
+    setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...patch } : draft));
+  }
+
+  function draftScope(draft: RangeDraft) {
+    const school = `${draft.school === "직접입력" ? draft.customSchool.trim() : draft.school}${draft.grade}`;
+    let detail = draft.range.trim();
+    if (draft.sourceType === "textbook") detail = `${draft.title.trim()}${draft.publisher.trim() ? ` ${draft.publisher.trim()}` : ""}${draft.lesson.trim() ? ` ${draft.lesson.trim()}과` : ""}${detail ? ` ${detail}` : " 본문전체"}`;
+    if (draft.sourceType === "mock") detail = `${draft.year.trim()}년 ${draft.month.trim()}월 모의고사 ${detail}${detail && !detail.endsWith("번") ? "번" : ""}`;
+    if (draft.sourceType === "supplement") detail = `${draft.title.trim()}${draft.lesson.trim() ? ` ${draft.lesson.trim()}강` : ""}${detail ? ` ${detail}` : ""}`;
+    const exceptions = [draft.excludeC2 ? "영작배열 제외" : "", draft.excludeFurther ? "Further Reading 제외" : ""].filter(Boolean);
+    return `${school}: ${detail.trim()}${exceptions.length ? ` (${exceptions.join(" · ")})` : ""}`;
+  }
+
+  function structuredScope() {
+    return `<${weekNumber || "1"}주차>\n${drafts.map(draftScope).join("\n")}`;
+  }
+
+  function draftValid(draft: RangeDraft) {
+    if (draft.school === "직접입력" && !draft.customSchool.trim()) return false;
+    if (draft.sourceType === "textbook") return Boolean(draft.title.trim() && draft.lesson.trim());
+    if (draft.sourceType === "mock") return Boolean(draft.year.trim() && draft.month.trim() && draft.range.trim());
+    if (draft.sourceType === "supplement") return Boolean(draft.title.trim() && draft.lesson.trim() && draft.range.trim());
+    return Boolean(draft.range.trim());
   }
 
   useEffect(() => {
@@ -240,11 +272,13 @@ export default function DriveMaker() {
     return { ...payload, jobs, counts, fileCount: payload.fileCount + localUploads.length };
   }
 
-  async function inspect() {
+  async function inspect(scopeOverride?: string) {
+    const requestedScope = scopeOverride ?? scope;
+    setScope(requestedScope);
     setBusy(true); setError(""); setMessage(""); setPlan(null); setConfirmed(false); setFilter("all");
     setProgress("Drive 자료를 학교별로 분류하고 있습니다…");
     try {
-      const payload = await apiJson<Plan>("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope }) });
+      const payload = await apiJson<Plan>("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: requestedScope }) });
       const merged = mergeLocalFiles(payload);
       setPlan(merged);
       setChoices(defaultChoices(merged));
@@ -344,39 +378,39 @@ export default function DriveMaker() {
       {coverMessage && <p className="coverMessage">{coverMessage}</p>}
     </section>
 
-    <section className="inventoryPanel">
-      <div className="inventoryHeader">
-        <div><p className="stepLabel">자료 분류현황</p><h3>파일별 자동 분류 결과</h3><p>파일명과 저장 위치를 기준으로 현재 프로그램이 어떻게 판단하는지 보여줍니다.</p></div>
-        <button disabled={inventoryBusy || !connection?.connected} onClick={scanInventory}>{inventoryBusy ? "분류 중…" : inventory.length ? "최신 상태로 다시 분류" : "Drive 자료 분류하기"}</button>
+    <section className="rangeBuilder">
+      <div className="builderHeading">
+        <div><p className="stepLabel">1. 이번 주 작업 선택</p><h3>학교와 범위를 직접 선택하세요</h3><p>학교별 카드를 추가하면 선택한 값으로 작업표가 자동 구성됩니다.</p></div>
+        <label className="weekSelect"><span>주차</span><select value={weekNumber} onChange={(event) => setWeekNumber(event.target.value)}>{Array.from({ length: 12 }, (_, index) => <option value={String(index + 1)} key={index + 1}>{index + 1}주차</option>)}</select></label>
       </div>
-      {(inventory.length > 0 || inventoryBusy) && <>
-        <div className="inventoryProgress">{inventoryBusy && <i />} {inventoryProgress}</div>
-        <div className="inventoryFilters">
-          <button className={inventoryFilter === "all" ? "active" : ""} onClick={() => setInventoryFilter("all")}>전체 {inventory.length}</button>
-          {([...Object.keys(roleName), "unclassified"] as InventoryRole[]).map((role) => {
-            const count = inventory.filter((file) => file.role === role).length;
-            return <button className={inventoryFilter === role ? "active" : ""} key={role} onClick={() => setInventoryFilter(role)}>{role === "unclassified" ? "미분류" : roleName[role]} {count}</button>;
-          })}
+      <div className="draftList">{drafts.map((draft, index) => <article className="draftCard" key={draft.id}>
+        <header><strong>{String(index + 1).padStart(2, "0")} 학교 설정</strong>{drafts.length > 1 && <button onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}>삭제</button>}</header>
+        <div className="draftGrid basicFields">
+          <label><span>학년</span><select value={draft.grade} onChange={(event) => updateDraft(draft.id, { grade: event.target.value as "1" | "2" })}><option value="1">고1</option><option value="2">고2</option></select></label>
+          <label><span>학교</span><select value={draft.school} onChange={(event) => updateDraft(draft.id, { school: event.target.value })}>{schools.map((school) => <option key={school}>{school}</option>)}<option>직접입력</option></select></label>
+          {draft.school === "직접입력" && <label><span>학교명</span><input value={draft.customSchool} placeholder="학교 이름" onChange={(event) => updateDraft(draft.id, { customSchool: event.target.value })} /></label>}
+          <label><span>범위 종류</span><select value={draft.sourceType} onChange={(event) => updateDraft(draft.id, { sourceType: event.target.value as SourceType, title: "", publisher: "", lesson: "", year: "", month: "", range: "" })}><option value="textbook">교과서</option><option value="mock">모의고사</option><option value="supplement">부교재</option><option value="custom">직접 입력</option></select></label>
         </div>
-        <div className="inventoryList">
-          {inventory.filter((file) => inventoryFilter === "all" || file.role === inventoryFilter).slice(0, 300).map((file) => <div className={file.role === "unclassified" ? "unclassified" : ""} key={file.id}>
-            <span>{file.role === "unclassified" ? "미분류" : roleName[file.role]}</span>
-            <p><strong>{file.name}</strong><small>{file.path}</small></p>
-            <b>{file.reason}</b>
-          </div>)}
+        <div className="draftGrid rangeFields">
+          {draft.sourceType === "textbook" && <><label><span>교재명</span><input value={draft.title} placeholder="예: 공통영어2" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>출판사·저자</span><input value={draft.publisher} placeholder="예: 능률(오)" onChange={(event) => updateDraft(draft.id, { publisher: event.target.value })} /></label><label><span>과</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 2" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label><span>본문·지문 범위</span><input value={draft.range} placeholder="예: 본문전체 / 1~4번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
+          {draft.sourceType === "mock" && <><label><span>연도</span><input value={draft.year} inputMode="numeric" placeholder="예: 24" onChange={(event) => updateDraft(draft.id, { year: event.target.value })} /></label><label><span>시행 월</span><select value={draft.month} onChange={(event) => updateDraft(draft.id, { month: event.target.value })}><option value="">선택</option>{[3, 4, 6, 9, 10, 11].map((month) => <option value={String(month)} key={month}>{month}월</option>)}</select></label><label className="wide"><span>문항 번호</span><input value={draft.range} placeholder="예: 20~24, 29~32" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
+          {draft.sourceType === "supplement" && <><label><span>부교재명</span><input value={draft.title} placeholder="예: 마더텅 / 올포" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>강</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 11" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label className="wide"><span>지문 범위</span><input value={draft.range} placeholder="예: 20~40번 / 1~6번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
+          {draft.sourceType === "custom" && <label className="full"><span>범위 내용</span><input value={draft.range} placeholder="범위를 구체적으로 입력하세요" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label>}
         </div>
-      </>}
-      {!inventory.length && !inventoryBusy && <div className="inventoryEmpty">버튼을 누르면 Drive의 최신 파일을 폴더별로 읽어 분류합니다.</div>}
+        <div className="draftOptions"><label><input type="checkbox" checked={draft.excludeC2} onChange={(event) => updateDraft(draft.id, { excludeC2: event.target.checked })} />영작배열 제외</label><label><input type="checkbox" checked={draft.excludeFurther} onChange={(event) => updateDraft(draft.id, { excludeFurther: event.target.checked })} />Further Reading 제외</label></div>
+        <p className="draftPreview"><span>작업표 미리보기</span>{draftScope(draft)}</p>
+      </article>)}</div>
+      <div className="builderActions"><button className="addSchool" onClick={() => setDrafts((current) => [...current, emptyDraft(Math.max(0, ...current.map((item) => item.id)) + 1)])}>+ 학교 추가</button><button className="inspectButton" disabled={busy || !connection?.connected || drafts.some((draft) => !draftValid(draft))} onClick={() => void inspect(structuredScope())}>{busy ? "자료 확인 중…" : "선택한 범위로 자료 찾기"}</button></div>
     </section>
 
-    <section className="scopeWorkspace">
-      <div className="scopeHeader">
-        <div><p className="stepLabel">1. 이번 주 범위</p><h3>받은 범위표를 그대로 붙여넣으세요</h3></div>
-        <span>주차·학년 제목은 자동 구분됩니다</span>
-      </div>
-      <textarea value={scope} onChange={(event) => setScope(event.target.value)} aria-label="학교별 클리닉 범위" />
-      <div className="scopeActions"><p>예외 문구도 인식합니다: 영작배열 제외 · Further Reading 제외</p><button disabled={busy || !connection?.connected || !scope.trim()} onClick={inspect}>{busy ? "자료 확인 중…" : "자료 현황 만들기"}</button></div>
-    </section>
+    <details className="adminInventory">
+      <summary>관리자용 Drive 분류 확인</summary>
+      <section className="inventoryPanel">
+        <div className="inventoryHeader"><div><h3>파일별 자동 분류 결과</h3><p>파일명과 저장 위치를 기준으로 현재 프로그램의 판단을 확인합니다. 매주 제작에는 필요하지 않습니다.</p></div><button disabled={inventoryBusy || !connection?.connected} onClick={scanInventory}>{inventoryBusy ? "분류 중…" : inventory.length ? "최신 상태로 다시 분류" : "Drive 자료 분류하기"}</button></div>
+        {(inventory.length > 0 || inventoryBusy) && <><div className="inventoryProgress">{inventoryBusy && <i />} {inventoryProgress}</div><div className="inventoryFilters"><button className={inventoryFilter === "all" ? "active" : ""} onClick={() => setInventoryFilter("all")}>전체 {inventory.length}</button>{([...Object.keys(roleName), "unclassified"] as InventoryRole[]).map((role) => <button className={inventoryFilter === role ? "active" : ""} key={role} onClick={() => setInventoryFilter(role)}>{role === "unclassified" ? "미분류" : roleName[role]} {inventory.filter((file) => file.role === role).length}</button>)}</div><div className="inventoryList">{inventory.filter((file) => inventoryFilter === "all" || file.role === inventoryFilter).slice(0, 300).map((file) => <div className={file.role === "unclassified" ? "unclassified" : ""} key={file.id}><span>{file.role === "unclassified" ? "미분류" : roleName[file.role]}</span><p><strong>{file.name}</strong><small>{file.path}</small></p><b>{file.reason}</b></div>)}</div></>}
+        {!inventory.length && !inventoryBusy && <div className="inventoryEmpty">필요할 때만 Drive 파일의 분류 상태를 확인하세요.</div>}
+      </section>
+    </details>
 
     {progress && <div className="notice success"><i /> {progress}</div>}
     {message && <div className="notice success">{message}</div>}

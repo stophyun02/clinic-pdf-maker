@@ -12,6 +12,9 @@ test("exposes one unified clinic workflow", async () => {
   assert.match(page, /클리닉 제작실/);
   assert.match(maker, /Drive 자료와 직접 올린 파일을 함께 확인합니다/);
   assert.match(maker, /보충 PDF 선택/);
+  assert.match(maker, /학교와 범위를 직접 선택하세요/);
+  assert.match(maker, /범위 종류/);
+  assert.match(maker, /관리자용 Drive 분류 확인/);
 });
 
 test("stops unsafe Drive jobs instead of guessing", async () => {
