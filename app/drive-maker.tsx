@@ -68,6 +68,19 @@ function save(bytes: Uint8Array, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 20_000);
 }
 
+async function apiJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, { credentials: "same-origin", ...init });
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) {
+    throw new Error(response.status === 401 || response.status === 403 || response.redirected
+      ? "로그인이 만료되었습니다. 페이지를 새로고침한 뒤 다시 로그인해 주세요."
+      : "사이트 응답을 확인하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+  }
+  const payload = await response.json() as T & { error?: string };
+  if (!response.ok) throw new Error(payload.error ?? "요청을 처리하지 못했습니다.");
+  return payload;
+}
+
 function reportCsv(plan: Plan) {
   const rows = [["학교", "범위", "상태", "누락", "중복", "비고"], ...plan.jobs.map((job) => [
     job.school, job.scope, statusMeta[job.status].label, job.missing.map((role) => roleName[role]).join(" / "), job.ambiguous.map((role) => roleName[role]).join(" / "), job.note,
@@ -99,17 +112,17 @@ export default function DriveMaker() {
   const buildableCount = useMemo(() => plan?.jobs.filter((job) => job.status === "ready" || job.status === "questionReady").length ?? 0, [plan]);
 
   useEffect(() => {
-    fetch("/api/drive/status").then((response) => response.json()).then(setConnection).catch(() => setConnection({ connected: false, fileCount: 0 }));
-    fetch("/api/drive/covers").then((response) => response.json()).then((payload) => setCovers(payload.covers ?? [])).catch(() => setCovers([]));
+    apiJson<{ connected: boolean; fileCount: number; pdfCount?: number; rootCount?: number; rootNames?: string[]; error?: string }>("/api/drive/status")
+      .then(setConnection).catch((reason) => setConnection({ connected: false, fileCount: 0, error: reason instanceof Error ? reason.message : "자료실 연결을 확인하지 못했습니다." }));
+    apiJson<{ covers?: { id: string; name: string; size?: string; modifiedTime?: string }[] }>("/api/drive/covers")
+      .then((payload) => setCovers(payload.covers ?? [])).catch(() => setCovers([]));
   }, []);
 
   async function saveCover(file: File) {
     setCoverBusy(true); setCoverMessage("");
     try {
       const form = new FormData(); form.append("file", file);
-      const response = await fetch("/api/drive/covers", { method: "POST", body: form });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "표지 저장에 실패했습니다.");
+      const payload = await apiJson<{ cover: { id: string; name: string; size?: string; modifiedTime?: string } }>("/api/drive/covers", { method: "POST", body: form });
       setCovers((current) => [payload.cover, ...current.filter((item) => item.id !== payload.cover.id)]);
       setCoverMessage(`${payload.cover.name}을 비공개 표지 자료실에 저장했습니다.`);
     } catch (reason) { setCoverMessage(reason instanceof Error ? reason.message : "표지 저장에 실패했습니다."); }
@@ -119,17 +132,13 @@ export default function DriveMaker() {
   async function scanInventory() {
     setInventoryBusy(true); setInventory([]); setInventoryProgress("최상위 자료실을 확인하고 있습니다…");
     try {
-      const rootResponse = await fetch("/api/drive/browse");
-      const rootPayload = await rootResponse.json();
-      if (!rootResponse.ok) throw new Error(rootPayload.error ?? "자료실을 읽지 못했습니다.");
+      const rootPayload = await apiJson<{ roots: { id: string; name: string }[] }>("/api/drive/browse");
       const queue: { id: string; path: string }[] = rootPayload.roots.map((root: { id: string; name: string }) => ({ id: root.id, path: root.name }));
       const found: InventoryFile[] = [];
       let folders = 0;
       while (queue.length && folders < 500) {
         const folder = queue.shift()!;
-        const response = await fetch(`/api/drive/browse?folderId=${encodeURIComponent(folder.id)}`);
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error ?? "Drive 폴더를 읽지 못했습니다.");
+        const payload = await apiJson<{ items: { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }[] }>(`/api/drive/browse?folderId=${encodeURIComponent(folder.id)}`);
         folders += 1;
         for (const item of payload.items as { id: string; name: string; mimeType: string; size?: string; modifiedTime?: string }[]) {
           const path = `${folder.path}/${item.name}`;
@@ -190,9 +199,7 @@ export default function DriveMaker() {
     setBusy(true); setError(""); setMessage(""); setPlan(null); setConfirmed(false); setFilter("all");
     setProgress("Drive 자료를 학교별로 분류하고 있습니다…");
     try {
-      const response = await fetch("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope }) });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "자료 검색에 실패했습니다.");
+      const payload = await apiJson<Plan>("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope }) });
       const merged = mergeLocalFiles(payload);
       setPlan(merged);
       setMessage(`${payload.week} · ${payload.jobs.length}개 학교의 자료 현황을 만들었습니다.`);
