@@ -22,6 +22,7 @@ function requestedItems(fragment) {
   let unique = [...new Set(values)].filter((value) => value !== "0");
   if (/짝수(?:\s*번호)?만/.test(fragment)) unique = unique.filter((value) => Number(value) % 2 === 0);
   if (/홀수(?:\s*번호)?만/.test(fragment)) unique = unique.filter((value) => Number(value) % 2 === 1);
+  for (const match of fragment.matchAll(/(\d+)\s*\(\s*두\s*개\s*\)/g)) if (unique.includes(String(Number(match[1])))) unique.push(String(Number(match[1])));
   return unique.length ? unique : null;
 }
 

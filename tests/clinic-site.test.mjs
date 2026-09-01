@@ -41,3 +41,19 @@ test("keeps the required clinic and booklet order", async () => {
   assert.match(maker, /buildClinicPdf/);
   assert.match(maker, /buildClinicAnswerPdf/);
 });
+
+test("wires the four advanced safety engines into the unified workflow", async () => {
+  const [maker, engine, ocr] = await Promise.all([
+    readFile(new URL("app/drive-maker.tsx", root), "utf8"),
+    readFile(new URL("app/pdf-engine.ts", root), "utf8"),
+    readFile(new URL("app/api/ocr/route.ts", root), "utf8"),
+  ]);
+  assert.match(maker, /isHanyoungSpecial/);
+  assert.match(maker, /buildHanyoungPdf/);
+  assert.match(maker, /choice\.excludeFurther/);
+  assert.match(engine, /c1Blocks/);
+  assert.match(engine, /chooseBlocks/);
+  assert.match(engine, /isFurtherReading/);
+  assert.match(engine, /\/api\/ocr/);
+  assert.match(ocr, /DOCUMENT_TEXT_DETECTION/);
+});

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PDFDocument } from "pdf-lib";
-import { analyzeAnswerWorkbook, analyzeWorkbook, buildClinicAnswerPdf, buildClinicPdf, parseWorkbookScope } from "./pdf-engine";
+import { analyzeAnswerWorkbook, analyzeHanyoung, analyzeWorkbook, buildClinicAnswerPdf, buildClinicPdf, buildHanyoungPdf, HanyoungSource, parseWorkbookScope } from "./pdf-engine";
 
 type Role = "workbook" | "workbookAnswer" | "rete" | "reteAnswer" | "cover";
 type Status = "ready" | "questionReady" | "missing" | "ambiguous" | "review";
@@ -146,10 +146,13 @@ export default function DriveMaker() {
     const id = choices[job.id]?.selected[role];
     return job.materials[role].find((candidate) => candidate.id === id);
   };
+  const isHanyoungSpecial = (job: Job) => /한영고1/.test(job.school) && /마더텅/.test(job.scope);
   const jobCanBuild = (job: Job) => {
     const choice = choices[job.id];
     if (!choice?.rangeConfirmed || !choice.includeC1 || !choice.includeRete) return false;
-    if (!selectedCandidate(job, "workbook") || !selectedCandidate(job, "rete")) return false;
+    if (!selectedCandidate(job, "workbook")) return false;
+    if (isHanyoungSpecial(job)) return Boolean(selectedCandidate(job, "workbookAnswer"));
+    if (!selectedCandidate(job, "rete")) return false;
     if (choice.includeAnswers && !choice.allowQuestionOnly && (!selectedCandidate(job, "workbookAnswer") || !selectedCandidate(job, "reteAnswer"))) return false;
     return true;
   };
@@ -315,6 +318,34 @@ export default function DriveMaker() {
     for (const [school, jobs] of schoolGroups()) {
       try {
         setProgress(`${school}의 ${jobs.length}개 범위를 원문과 대조하고 있습니다…`);
+        if (jobs.length === 1 && isHanyoungSpecial(jobs[0])) {
+          const job = jobs[0]; const choice = choices[job.id];
+          const workbookCandidate = selectedCandidate(job, "workbook")!; const answerCandidate = selectedCandidate(job, "workbookAnswer")!;
+          const [wb, wa] = await Promise.all([loadPdf(workbookCandidate, localFileMap), loadPdf(answerCandidate, localFileMap)]);
+          const analysis = await analyzeHanyoung(wb, wa); const parsed = parseWorkbookScope(choice.scope)[0];
+          const passages = parsed.items ? parsed.items.map(Number).filter((value) => Number.isInteger(value)) : analysis.sources.map((source) => source.passage);
+          const cache = new Map<string, Uint8Array>();
+          const loader = async (source: HanyoungSource, kind: "question" | "answer") => {
+            const key = `${source.year}-${source.month}-${kind}`;
+            if (!cache.has(key)) {
+              const response = await fetch(`/api/hanyoung/rete?year=${source.year}&month=${source.month}&kind=${kind}`);
+              if (!response.ok) throw new Error(`리테 보관함에 ${source.year}년 ${source.month}월 ${kind === "question" ? "문제" : "정답"}이 없습니다.`);
+              cache.set(key, new Uint8Array(await response.arrayBuffer()));
+            }
+            return cache.get(key)!;
+          };
+          const question = await buildHanyoungPdf(wb, analysis, passages, loader, "question", undefined, choice.includeC2);
+          let answer: Uint8Array | undefined;
+          if (choice.includeAnswers) {
+            try { answer = await buildHanyoungPdf(wb, analysis, passages, loader, "answer", wa, choice.includeC2); }
+            catch (reason) { if (!choice.allowQuestionOnly) throw reason; failures.push(`${school}: 정답지는 중단하고 문제지만 생성 - ${reason instanceof Error ? reason.message : "정답 검증 실패"}`); }
+          }
+          const coverCandidate = choice.includeCover ? selectedCandidate(job, "cover") : undefined;
+          const cover = coverCandidate ? await loadPdf(coverCandidate, localFileMap) : null;
+          if (outputMode === "separate" && answer) { save(await assemble(cover, question), `${plan.week}_${school}클리닉_문제지.pdf`); save(answer, `${plan.week}_${school}클리닉_정답지.pdf`); }
+          else save(await assemble(cover, question, answer), `${plan.week}_${school}클리닉_${answer ? "완성본" : "문제지"}.pdf`);
+          completed += 1; continue;
+        }
         const questionC1: Uint8Array[] = []; const questionRete: Uint8Array[] = []; const questionC2: Uint8Array[] = [];
         const answerC1: Uint8Array[] = []; const answerRete: Uint8Array[] = []; const answerC2: Uint8Array[] = [];
         let cover: Uint8Array | null = null; let answerComplete = true;
@@ -327,13 +358,13 @@ export default function DriveMaker() {
           const scopeParts = parseWorkbookScope(choice.scope);
           if (!analysis.c1Groups.length || scopeParts.some((part) => part.sectionIndex > analysis.c1Groups.length)) throw new Error(`${choice.scope}: 워크북 문장배열 구조가 범위와 일치하지 않습니다.`);
           const includeC2 = choice.includeC2 && analysis.c2Groups.length > 0;
-          const questionResult = await buildClinicPdf(wb, rete, analysis, scopeParts, "all", includeC2);
+          const questionResult = await buildClinicPdf(wb, rete, analysis, scopeParts, "all", includeC2, choice.excludeFurther);
           questionC1.push(questionResult.c1); questionRete.push(questionResult.rete); if (questionResult.c2) questionC2.push(questionResult.c2);
           if (choice.includeAnswers && selectedCandidate(job, "workbookAnswer") && selectedCandidate(job, "reteAnswer")) {
             try {
               const [wa, reteAnswer] = await Promise.all([loadPdf(one("workbookAnswer"), localFileMap), loadPdf(one("reteAnswer"), localFileMap)]);
               const answerAnalysis = await analyzeAnswerWorkbook(wa);
-              const answerResult = await buildClinicAnswerPdf(wa, reteAnswer, answerAnalysis, scopeParts, questionResult.fingerprints, includeC2);
+              const answerResult = await buildClinicAnswerPdf(wa, reteAnswer, answerAnalysis, scopeParts, questionResult.fingerprintGroups, includeC2);
               answerC1.push(answerResult.c1); answerRete.push(answerResult.rete); if (answerResult.c2) answerC2.push(answerResult.c2);
             } catch (reason) {
               if (!choice.allowQuestionOnly) throw reason;
@@ -383,7 +414,7 @@ export default function DriveMaker() {
       <div>
         <p className="stepLabel">자료 가져오기</p>
         <h3>Drive 자료와 직접 올린 파일을 함께 확인합니다</h3>
-        <p>Drive에 없는 워크북·정답·리테·표지만 추가로 올리세요. 학교가 여러 곳이면 파일명에 학교명이 있어야 정확히 연결됩니다.</p>
+        <p>Drive에 없는 워크북·정답·리테·표지만 추가로 올리세요. 학교가 여러 곳이면 파일명에 학교명이 있어야 정확히 연결됩니다. 글자를 읽을 수 없는 이미지형 PDF는 Google OCR로 한 번 더 분석합니다.</p>
       </div>
       <label className="inlineUploader">
         <input type="file" accept="application/pdf" multiple onChange={(event) => setLocalUploads(Array.from(event.target.files ?? []))} />

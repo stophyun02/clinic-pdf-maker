@@ -16,7 +16,7 @@ type DriveConfig = {
   privateKey: string;
 };
 
-let tokenCache: { token: string; expiresAt: number } | null = null;
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 function config(): DriveConfig | null {
   const values = env as unknown as Record<string, string | undefined>;
@@ -38,13 +38,14 @@ function pemBytes(pem: string) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
-async function accessToken(settings: DriveConfig) {
-  if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) return tokenCache.token;
+async function accessToken(settings: DriveConfig, scope = "https://www.googleapis.com/auth/drive.readonly") {
+  const cached = tokenCache.get(scope);
+  if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
   const now = Math.floor(Date.now() / 1000);
   const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
   const claim = base64Url(JSON.stringify({
     iss: settings.email,
-    scope: "https://www.googleapis.com/auth/drive.readonly",
+    scope,
     aud: "https://oauth2.googleapis.com/token",
     iat: now,
     exp: now + 3600,
@@ -65,8 +66,14 @@ async function accessToken(settings: DriveConfig) {
   });
   if (!response.ok) throw new Error("Google Drive 인증에 실패했습니다. 서비스 계정 공유 권한을 확인해 주세요.");
   const payload = await response.json<{ access_token: string; expires_in: number }>();
-  tokenCache = { token: payload.access_token, expiresAt: Date.now() + payload.expires_in * 1000 };
+  tokenCache.set(scope, { token: payload.access_token, expiresAt: Date.now() + payload.expires_in * 1000 });
   return payload.access_token;
+}
+
+export async function googleCloudAccessToken() {
+  const settings = config();
+  if (!settings) throw new Error("Google 서비스 계정 연결 설정이 아직 완료되지 않았습니다.");
+  return accessToken(settings, "https://www.googleapis.com/auth/cloud-platform");
 }
 
 export function driveConfigured() {

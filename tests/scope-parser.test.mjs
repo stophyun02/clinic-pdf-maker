@@ -18,7 +18,7 @@ test("parses multiple textbook lessons with a partial second lesson", () => {
 
 test("keeps nested passage labels and multiple lessons", () => {
   assert.deepEqual(parseWorkbookScope("성덕고2: 1과본문 4-2,5(두개)+2과본문"), [
-    { sectionIndex: 1, items: ["4-2", "5"] },
+    { sectionIndex: 1, items: ["4-2", "5", "5"] },
     { sectionIndex: 2, items: null },
   ]);
 });

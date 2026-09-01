@@ -22,6 +22,8 @@ export type WorkbookPage = {
   anchorY: number | null;
   labels: string[];
   englishWords: string[];
+  isFurtherReading: boolean;
+  usedOcr: boolean;
 };
 
 export type WorkbookAnalysis = {
@@ -42,7 +44,11 @@ export type AnswerSection = {
 export type AnswerWorkbookAnalysis = {
   c1Sections: AnswerSection[];
   c2Sections: AnswerSection[];
+  c1Blocks: AnswerBlock[][];
+  c2Blocks: AnswerBlock[][];
 };
+
+export type AnswerBlock = AnswerSection & { words: string[] };
 
 type SectionHeading = { name: string; page: number; y: number };
 
@@ -68,6 +74,19 @@ const groups = (pages: number[]) => {
   return result;
 };
 
+async function ocrPage(page: { getViewport: (options: { scale: number }) => { width: number; height: number }; render: (options: { canvasContext: CanvasRenderingContext2D; viewport: unknown }) => { promise: Promise<unknown> } }) {
+  if (typeof document === "undefined") throw new Error("이미지형 PDF는 브라우저 OCR에서만 분석할 수 있습니다.");
+  const viewport = page.getViewport({ scale: 1.6 });
+  const canvas = document.createElement("canvas"); canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+  const context = canvas.getContext("2d"); if (!context) throw new Error("이미지형 PDF를 읽을 화면을 만들지 못했습니다.");
+  await page.render({ canvasContext: context, viewport }).promise;
+  const image = canvas.toDataURL("image/jpeg", 0.88).split(",")[1];
+  const response = await fetch("/api/ocr", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ image }) });
+  const payload = await response.json() as { text?: string; tokens?: { text: string; x: number; y: number }[]; error?: string };
+  if (!response.ok) throw new Error(payload.error ?? "이미지형 PDF OCR에 실패했습니다.");
+  return { text: payload.text ?? "", tokens: payload.tokens ?? [] };
+}
+
 export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalysis> {
   const pdfjs = await import("pdfjs-dist/build/pdf.mjs");
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -86,8 +105,18 @@ export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalys
       line.push(item);
       byLine.set(y, line);
     }
+    let usedOcr = false;
+    if (compact(items.map((item) => item.str).join(" ")).length < 20) {
+      const ocr = await ocrPage(page as never); usedOcr = true;
+      const height = page.getViewport({ scale: 1 }).height;
+      for (const token of ocr.tokens) {
+        const y = Math.round((height - token.y * height) / 6) * 6;
+        const line = byLine.get(y) ?? []; line.push({ str: token.text, transform: [1, 0, 0, 1, token.x, y] }); byLine.set(y, line);
+      }
+    }
     const lineTexts = [...byLine.values()].map((line) => compact(line.map((item) => item.str).join("")));
-    const pageText = compact(items.map((item) => item.str).join(" "));
+    const readableText = [...byLine.values()].flat().map((item) => item.str).join(" ");
+    const pageText = compact(readableText);
     const c1Header = lineTexts.some((line) => line === "c1" || line.startsWith("c1stepbystep"));
     const c2Header = lineTexts.some((line) => line === "c2" || line.startsWith("c2stepbystep"));
     const c1 = lineTexts.some((line) => line.includes("c1문장배열")) || (c1Header && pageText.includes("step01"));
@@ -115,7 +144,7 @@ export async function analyzeWorkbook(bytes: Uint8Array): Promise<WorkbookAnalys
       if (plain && Number(plain[1]) > 0 && Number(plain[1]) <= 60) labels.add(String(Number(plain[1])));
       if (nested) labels.add(`${Number(nested[1])}-${Number(nested[2])}`);
     }
-    pages.push({ page: index, kind: c1 ? "C1" : c2 ? "C2" : null, anchorY, labels: [...labels], englishWords: englishWords(items.map((item) => item.str).join(" ")) });
+    pages.push({ page: index, kind: c1 ? "C1" : c2 ? "C2" : null, anchorY, labels: [...labels], englishWords: englishWords(readableText), isFurtherReading: pageText.includes("furtherreading"), usedOcr });
   }
 
   return {
@@ -256,6 +285,7 @@ export async function buildHanyoungPdf(
   reteLoader: (source: HanyoungSource, kind: "question" | "answer") => Promise<Uint8Array>,
   kind: "question" | "answer" = "question",
   workbookAnswerBytes?: Uint8Array,
+  includeC2 = true,
 ) {
   const sourceBytes = kind === "question" ? workbookBytes : workbookAnswerBytes;
   if (!sourceBytes) throw new Error("워크북 정답지가 없습니다.");
@@ -264,7 +294,7 @@ export async function buildHanyoungPdf(
   const selected = new Set(passages);
   if (kind === "answer") {
     const missingC1 = passages.filter((passage) => analysis.answerC1ByPassage[passage] == null);
-    const missingC2 = passages.filter((passage) => analysis.answerC2ByPassage[passage] == null);
+    const missingC2 = includeC2 ? passages.filter((passage) => analysis.answerC2ByPassage[passage] == null) : [];
     if (missingC1.length || missingC2.length) {
       const details = [missingC1.length ? `문장배열 ${missingC1.join(", ")}번` : "", missingC2.length ? `영작배열 ${missingC2.join(", ")}번` : ""].filter(Boolean).join(" / ");
       throw new Error(`워크북 정답지에서 선택 범위의 정답을 모두 찾지 못했습니다: ${details}`);
@@ -290,6 +320,7 @@ export async function buildHanyoungPdf(
     const bytes = await reteLoader(mapping, kind); const rete = await PDFDocument.load(bytes.slice());
     const pageNo = await findRetePage(bytes, mapping); const [page] = await output.copyPages(rete, [pageNo - 1]); output.addPage(page);
   }
+  if (!includeC2) return output.save({ useObjectStreams: true });
   const c2Map = kind === "question" ? analysis.c2ByPassage : analysis.answerC2ByPassage;
   const c2Pages = [...new Set(passages.map((n) => c2Map[n]).filter(Boolean))];
   const copiedC2 = await output.copyPages(source, c2Pages.map((n) => n - 1)); copiedC2.forEach((p, index) => {
@@ -308,11 +339,17 @@ export async function analyzeAnswerWorkbook(bytes: Uint8Array): Promise<AnswerWo
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
   const document = await pdfjs.getDocument({ data: bytes.slice() }).promise;
   const headings: SectionHeading[] = [];
+  const pageItems = new Map<number, TextItemLike[]>();
 
   for (let index = 1; index <= document.numPages; index += 1) {
     const page = await document.getPage(index);
     const content = await page.getTextContent();
-    const items = content.items.filter((item): item is TextItemLike => "str" in item && "transform" in item);
+    let items = content.items.filter((item): item is TextItemLike => "str" in item && "transform" in item);
+    if (compact(items.map((item) => item.str).join(" ")).length < 20) {
+      const ocr = await ocrPage(page as never); const height = page.getViewport({ scale: 1 }).height;
+      items = ocr.tokens.map((token) => ({ str: token.text, transform: [1, 0, 0, 1, token.x, Math.round((height - token.y * height) / 6) * 6] }));
+    }
+    pageItems.set(index, items);
     const byLine = new Map<number, TextItemLike[]>();
     for (const item of items) {
       const y = Math.round(item.transform[5] * 2) / 2;
@@ -363,7 +400,25 @@ export async function analyzeAnswerWorkbook(bytes: Uint8Array): Promise<AnswerWo
     if (heading.name === "c1문장배열") c1Sections.push(toSection(heading, index));
     if (heading.name === "c2영작배열") c2Sections.push(toSection(heading, index));
   });
-  return { c1Sections, c2Sections };
+  const blocksFor = (name: string, sections: AnswerSection[]) => sections.map((section) => {
+    const starts = headings.filter((heading) => heading.name === name && (heading.page > section.startPage || heading.page === section.startPage && heading.y <= section.startY) && (heading.page < section.endPage || heading.page === section.endPage && (section.endY == null || heading.y > section.endY)));
+    return starts.map((start) => {
+      const absoluteIndex = headings.indexOf(start); const next = headings[absoluteIndex + 1];
+      const endPage = next && (next.page < section.endPage || next.page === section.endPage && (section.endY == null || next.y >= section.endY)) ? next.page : section.endPage;
+      const endY = next && endPage === next.page ? next.y : section.endY;
+      const words: string[] = [];
+      for (let pageNo = start.page; pageNo <= endPage; pageNo += 1) {
+        for (const item of pageItems.get(pageNo) ?? []) {
+          const y = item.transform[5];
+          if (pageNo === start.page && y > start.y + 12) continue;
+          if (pageNo === endPage && endY != null && y <= endY + 8) continue;
+          words.push(...englishWords(item.str));
+        }
+      }
+      return { startPage: start.page, startY: start.y, endPage, endY, words: [...new Set(words)] };
+    });
+  });
+  return { c1Sections, c2Sections, c1Blocks: blocksFor("c1문장배열", c1Sections), c2Blocks: blocksFor("c2영작배열", c2Sections) };
 }
 
 export function parsePageRanges(spec: string, pageCount: number) {
@@ -391,16 +446,18 @@ export function parsePageRanges(spec: string, pageCount: number) {
 
 function selectedPages(group: number[], items: string[] | null, analysis: WorkbookAnalysis, label: string) {
   if (items == null || items.length === 0) return { pages: group, positions: group.map((_, index) => index) };
-  const exact = group.filter((pageNo) => analysis.pages[pageNo - 1].labels.some((value) => items.includes(value)));
-  const covered = new Set(exact.flatMap((pageNo) => analysis.pages[pageNo - 1].labels.filter((value) => items.includes(value))));
-  if (items.every((item) => covered.has(item))) return { pages: exact, positions: exact.map((pageNo) => group.indexOf(pageNo)) };
+  const unused = new Set(group); const exact: number[] = []; const missing: string[] = [];
+  for (const item of items) {
+    const pageNo = group.find((candidate) => unused.has(candidate) && analysis.pages[candidate - 1].labels.includes(item));
+    if (pageNo == null) missing.push(item); else { exact.push(pageNo); unused.delete(pageNo); }
+  }
+  if (!missing.length) return { pages: exact, positions: exact.map((pageNo) => group.indexOf(pageNo)) };
   const hasDetectedLabels = group.some((pageNo) => analysis.pages[pageNo - 1].labels.length > 0);
   const numeric = items.map(Number);
   if (!hasDetectedLabels && numeric.every((value) => Number.isInteger(value) && value >= 1 && value <= group.length)) {
     const positions = [...new Set(numeric.map((value) => value - 1))];
     return { pages: positions.map((position) => group[position]), positions };
   }
-  const missing = items.filter((item) => !covered.has(item));
   throw new Error(`${label}에서 선택 번호 ${missing.join(", ")}를 안전하게 찾지 못했습니다.`);
 }
 
@@ -438,11 +495,18 @@ export async function buildClinicPdf(
   scopeParts: WorkbookScopePart[],
   reteRange: string,
   includeC2 = true,
+  excludeFurther = false,
 ) {
   const chosen: { c1: number[]; c2: number[] }[] = scopeParts.map((part) => {
     const c1Group = analysis.c1Groups[part.sectionIndex - 1];
     if (!c1Group) throw new Error(`${part.sectionIndex}과의 C1 문장배열 페이지 묶음을 찾을 수 없습니다.`);
-    const c1Selection = selectedPages(c1Group, part.items, analysis, `${part.sectionIndex}과 문장배열`);
+    let usableGroup = c1Group;
+    if (excludeFurther) {
+      const marker = c1Group.findIndex((pageNo) => analysis.pages[pageNo - 1].isFurtherReading);
+      if (marker < 0) throw new Error(`${part.sectionIndex}과에서 Further Reading 시작 위치를 확인하지 못했습니다.`);
+      usableGroup = c1Group.slice(0, marker);
+    }
+    const c1Selection = selectedPages(usableGroup, part.items, analysis, `${part.sectionIndex}과 문장배열`);
     const c2Group = analysis.c2Groups[part.sectionIndex - 1] ?? [];
     const c2Pages = includeC2 ? c1Selection.positions.map((position) => c2Group[position]).filter(Boolean) : [];
     if (includeC2 && c2Pages.length !== c1Selection.positions.length) throw new Error(`${part.sectionIndex}과의 선택 범위와 같은 영작배열 페이지를 모두 찾지 못했습니다.`);
@@ -476,6 +540,7 @@ export async function buildClinicPdf(
   }
 
   const fingerprints = c1.map((pageNo) => analysis.pages[pageNo - 1].englishWords);
+  const fingerprintGroups = chosen.map((part) => part.c1.map((pageNo) => analysis.pages[pageNo - 1].englishWords));
   const retePages = ["", "all", "전체", "*"].includes(reteRange.trim().toLowerCase())
     ? await matchingRetePages(reteBytes, fingerprints)
     : parsePageRanges(reteRange, rete.getPageCount());
@@ -490,6 +555,7 @@ export async function buildClinicPdf(
     rete: await reteOutput.save({ useObjectStreams: true }),
     c2: c2Output.getPageCount() ? await c2Output.save({ useObjectStreams: true }) : null,
     fingerprints,
+    fingerprintGroups,
   };
 }
 
@@ -515,29 +581,50 @@ export async function buildClinicAnswerPdf(
   reteAnswerBytes: Uint8Array,
   analysis: AnswerWorkbookAnalysis,
   scopeParts: WorkbookScopePart[],
-  fingerprints: string[][],
+  fingerprintGroups: string[][][],
   includeC2 = true,
 ) {
-  const partial = scopeParts.filter((part) => part.items != null);
-  if (partial.length) throw new Error("선택 지문만 포함하는 워크북 정답 영역은 아직 안전하게 분리할 수 없습니다.");
   const workbookAnswer = await PDFDocument.load(workbookAnswerBytes.slice());
   const reteAnswer = await PDFDocument.load(reteAnswerBytes.slice());
   const c1Output = await PDFDocument.create();
   const reteOutput = await PDFDocument.create();
   const c2Output = await PDFDocument.create();
 
-  for (const part of scopeParts) {
+  const chooseBlocks = (blocks: AnswerBlock[], wanted: string[][], label: string) => {
+    const used = new Set<number>(); const chosen: AnswerBlock[] = [];
+    for (let index = 0; index < wanted.length; index += 1) {
+      const source = new Set(wanted[index]);
+      const ranked = blocks.map((block, blockIndex) => {
+        let common = 0; for (const word of block.words) if (source.has(word)) common += 1;
+        return { block, blockIndex, common, score: common / Math.max(1, Math.min(source.size, block.words.length)) };
+      }).filter((candidate) => !used.has(candidate.blockIndex)).sort((a, b) => b.score - a.score || b.common - a.common);
+      const best = ranked[0]; const second = ranked[1];
+      if (!best || best.common < 5 || best.score < 0.18 || (second && best.score - second.score < 0.02 && best.common - second.common < 3)) throw new Error(`${label}에서 선택한 ${index + 1}번째 지문의 정답 블록을 확실히 구분하지 못했습니다.`);
+      used.add(best.blockIndex); chosen.push(best.block);
+    }
+    return chosen;
+  };
+  for (const [partIndex, part] of scopeParts.entries()) {
     const c1 = analysis.c1Sections[part.sectionIndex - 1];
     if (!c1) throw new Error(`${part.sectionIndex}과의 C1 문장배열 정답 영역을 찾을 수 없습니다.`);
-    await appendAnswerSection(c1Output, workbookAnswer, c1);
+    if (part.items == null) await appendAnswerSection(c1Output, workbookAnswer, c1);
+    else {
+      const wanted = fingerprintGroups[partIndex] ?? [];
+      for (const block of chooseBlocks(analysis.c1Blocks[part.sectionIndex - 1] ?? [], wanted, `${part.sectionIndex}과 문장배열 정답`)) await appendAnswerSection(c1Output, workbookAnswer, block);
+    }
   }
+  const fingerprints = fingerprintGroups.flat();
   const retePages = await matchingRetePages(reteAnswerBytes, fingerprints);
   const copiedRete = await reteOutput.copyPages(reteAnswer, retePages.map((page) => page - 1));
   copiedRete.forEach((page) => reteOutput.addPage(page));
-  if (includeC2) for (const part of scopeParts) {
+  if (includeC2) for (const [partIndex, part] of scopeParts.entries()) {
     const c2 = analysis.c2Sections[part.sectionIndex - 1];
     if (!c2) throw new Error(`${part.sectionIndex}과의 C2 영작배열 정답 영역을 찾을 수 없습니다.`);
-    await appendAnswerSection(c2Output, workbookAnswer, c2);
+    if (part.items == null) await appendAnswerSection(c2Output, workbookAnswer, c2);
+    else {
+      const wanted = fingerprintGroups[partIndex] ?? [];
+      for (const block of chooseBlocks(analysis.c2Blocks[part.sectionIndex - 1] ?? [], wanted, `${part.sectionIndex}과 영작배열 정답`)) await appendAnswerSection(c2Output, workbookAnswer, block);
+    }
   }
   return {
     c1: await c1Output.save({ useObjectStreams: true }),
