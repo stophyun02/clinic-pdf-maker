@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { PDFDocument } from "pdf-lib";
-import { analyzeAnswerWorkbook, analyzeWorkbook, buildClinicAnswerPdf, buildClinicPdf } from "./pdf-engine";
+import { analyzeAnswerWorkbook, analyzeWorkbook, buildClinicAnswerPdf, buildClinicPdf, parseWorkbookScope } from "./pdf-engine";
 
 type Role = "workbook" | "workbookAnswer" | "rete" | "reteAnswer" | "cover";
 type Status = "ready" | "questionReady" | "missing" | "ambiguous" | "review";
@@ -32,6 +32,7 @@ type SourceType = "textbook" | "mock" | "supplement" | "custom";
 type RangeDraft = {
   id: number; grade: "1" | "2"; school: string; customSchool: string; sourceType: SourceType;
   title: string; publisher: string; lesson: string; year: string; month: string; range: string;
+  numberMode: "all" | "even" | "odd";
   excludeC2: boolean; excludeFurther: boolean;
 };
 
@@ -44,7 +45,7 @@ const statusMeta: Record<Status, { label: string; description: string }> = {
   ambiguous: { label: "후보 확인", description: "동일 조건의 파일이 여러 개입니다." },
 };
 const schools = ["강동고", "한영고", "배재고", "성덕고", "상일여고", "명일여고", "이대부고", "서울여고", "광성고"];
-const emptyDraft = (id: number): RangeDraft => ({ id, grade: "1", school: "강동고", customSchool: "", sourceType: "textbook", title: "", publisher: "", lesson: "", year: "", month: "", range: "", excludeC2: false, excludeFurther: false });
+const emptyDraft = (id: number): RangeDraft => ({ id, grade: "1", school: "강동고", customSchool: "", sourceType: "textbook", title: "", publisher: "", lesson: "", year: "", month: "", range: "", numberMode: "all", excludeC2: false, excludeFurther: false });
 
 function inventoryRole(name: string): { role: InventoryRole; reason: string } {
   const value = name.normalize("NFKC").toLowerCase();
@@ -74,6 +75,18 @@ async function assemble(coverBytes: Uint8Array | null, questionBytes: Uint8Array
   (await output.copyPages(question, question.getPageIndices())).forEach((page) => output.addPage(page));
   if (answer) (await output.copyPages(answer, answer.getPageIndices())).forEach((page) => output.addPage(page));
   if (cover && cover.getPageCount() >= 3) (await output.copyPages(cover, [1, 2])).forEach((page) => output.addPage(page));
+  return output.save({ useObjectStreams: true });
+}
+
+async function mergePdfs(parts: (Uint8Array | null | undefined)[]) {
+  const output = await PDFDocument.create();
+  for (const bytes of parts) {
+    if (!bytes) continue;
+    const source = await PDFDocument.load(bytes.slice());
+    const copied = await output.copyPages(source, source.getPageIndices());
+    copied.forEach((page) => output.addPage(page));
+  }
+  if (!output.getPageCount()) throw new Error("병합할 PDF 페이지가 없습니다.");
   return output.save({ useObjectStreams: true });
 }
 
@@ -140,7 +153,14 @@ export default function DriveMaker() {
     if (choice.includeAnswers && !choice.allowQuestionOnly && (!selectedCandidate(job, "workbookAnswer") || !selectedCandidate(job, "reteAnswer"))) return false;
     return true;
   };
-  const buildableCount = useMemo(() => plan?.jobs.filter(jobCanBuild).length ?? 0, [plan, choices]);
+  const schoolGroups = () => {
+    if (!plan) return [];
+    const buildableJobs = plan.jobs.filter(jobCanBuild);
+    const grouped = new Map<string, Job[]>();
+    for (const job of buildableJobs) grouped.set(job.school, [...(grouped.get(job.school) ?? []), job]);
+    return [...grouped].filter(([school, jobs]) => jobs.length === plan.jobs.filter((job) => job.school === school).length);
+  };
+  const buildableCount = useMemo(() => schoolGroups().length, [plan, choices]);
 
   function defaultChoices(payload: Plan) {
     return Object.fromEntries(payload.jobs.map((job) => [job.id, {
@@ -172,7 +192,7 @@ export default function DriveMaker() {
     if (draft.sourceType === "textbook") detail = `${draft.title.trim()}${draft.publisher.trim() ? ` ${draft.publisher.trim()}` : ""}${draft.lesson.trim() ? ` ${draft.lesson.trim()}과` : ""}${detail ? ` ${detail}` : " 본문전체"}`;
     if (draft.sourceType === "mock") detail = `${draft.year.trim()}년 ${draft.month.trim()}월 모의고사 ${detail}${detail && !detail.endsWith("번") ? "번" : ""}`;
     if (draft.sourceType === "supplement") detail = `${draft.title.trim()}${draft.lesson.trim() ? ` ${draft.lesson.trim()}강` : ""}${detail ? ` ${detail}` : ""}`;
-    const exceptions = [draft.excludeC2 ? "영작배열 제외" : "", draft.excludeFurther ? "Further Reading 제외" : ""].filter(Boolean);
+    const exceptions = [draft.numberMode === "even" ? "짝수 번호만" : draft.numberMode === "odd" ? "홀수 번호만" : "", draft.excludeC2 ? "영작배열 제외" : "", draft.excludeFurther ? "Further Reading 제외" : ""].filter(Boolean);
     return `${school}: ${detail.trim()}${exceptions.length ? ` (${exceptions.join(" · ")})` : ""}`;
   }
 
@@ -292,37 +312,49 @@ export default function DriveMaker() {
     setBusy(true); setError(""); setMessage("");
     let completed = 0;
     const failures: string[] = [];
-    for (const job of plan.jobs.filter(jobCanBuild)) {
+    for (const [school, jobs] of schoolGroups()) {
       try {
-        setProgress(`${job.school} PDF 구조를 검증하고 있습니다…`);
-        const choice = choices[job.id];
-        const one = (role: Role) => selectedCandidate(job, role)!;
-        const [wb, rete, cover] = await Promise.all([
-          loadPdf(one("workbook"), localFileMap), loadPdf(one("rete"), localFileMap), choice.includeCover && selectedCandidate(job, "cover") ? loadPdf(one("cover"), localFileMap) : Promise.resolve(null),
-        ]);
-        const analysis = await analyzeWorkbook(wb);
-        const lesson = Number(choice.scope.match(/(\d+)\s*과/)?.[1] ?? 1);
-        if (!analysis.c1Groups.length || lesson > analysis.c1Groups.length) throw new Error("요청 범위와 워크북 문장배열 구조가 일치하지 않습니다.");
-        const includeC2 = choice.includeC2 && analysis.c2Groups.length > 0;
-        const question = await buildClinicPdf(wb, rete, analysis, lesson, "all", includeC2);
-        let answer: Uint8Array | undefined;
-        if (choice.includeAnswers && selectedCandidate(job, "workbookAnswer") && selectedCandidate(job, "reteAnswer")) {
-          const [wa, reteAnswer] = await Promise.all([loadPdf(one("workbookAnswer"), localFileMap), loadPdf(one("reteAnswer"), localFileMap)]);
-          const answerAnalysis = await analyzeAnswerWorkbook(wa);
-          if (!answerAnalysis.c1Sections.length) throw new Error("워크북 정답에서 문장배열 정답을 찾지 못했습니다.");
-          if (includeC2 && !answerAnalysis.c2Sections.length) throw new Error("영작배열 정답이 부족합니다.");
-          answer = await buildClinicAnswerPdf(wa, reteAnswer, answerAnalysis, lesson, "all", includeC2);
+        setProgress(`${school}의 ${jobs.length}개 범위를 원문과 대조하고 있습니다…`);
+        const questionC1: Uint8Array[] = []; const questionRete: Uint8Array[] = []; const questionC2: Uint8Array[] = [];
+        const answerC1: Uint8Array[] = []; const answerRete: Uint8Array[] = []; const answerC2: Uint8Array[] = [];
+        let cover: Uint8Array | null = null; let answerComplete = true;
+        for (const job of jobs) {
+          const choice = choices[job.id];
+          const one = (role: Role) => selectedCandidate(job, role)!;
+          const [wb, rete] = await Promise.all([loadPdf(one("workbook"), localFileMap), loadPdf(one("rete"), localFileMap)]);
+          if (!cover && choice.includeCover && selectedCandidate(job, "cover")) cover = await loadPdf(one("cover"), localFileMap);
+          const analysis = await analyzeWorkbook(wb);
+          const scopeParts = parseWorkbookScope(choice.scope);
+          if (!analysis.c1Groups.length || scopeParts.some((part) => part.sectionIndex > analysis.c1Groups.length)) throw new Error(`${choice.scope}: 워크북 문장배열 구조가 범위와 일치하지 않습니다.`);
+          const includeC2 = choice.includeC2 && analysis.c2Groups.length > 0;
+          const questionResult = await buildClinicPdf(wb, rete, analysis, scopeParts, "all", includeC2);
+          questionC1.push(questionResult.c1); questionRete.push(questionResult.rete); if (questionResult.c2) questionC2.push(questionResult.c2);
+          if (choice.includeAnswers && selectedCandidate(job, "workbookAnswer") && selectedCandidate(job, "reteAnswer")) {
+            try {
+              const [wa, reteAnswer] = await Promise.all([loadPdf(one("workbookAnswer"), localFileMap), loadPdf(one("reteAnswer"), localFileMap)]);
+              const answerAnalysis = await analyzeAnswerWorkbook(wa);
+              const answerResult = await buildClinicAnswerPdf(wa, reteAnswer, answerAnalysis, scopeParts, questionResult.fingerprints, includeC2);
+              answerC1.push(answerResult.c1); answerRete.push(answerResult.rete); if (answerResult.c2) answerC2.push(answerResult.c2);
+            } catch (reason) {
+              if (!choice.allowQuestionOnly) throw reason;
+              answerComplete = false;
+              failures.push(`${school}: 정답지는 중단하고 문제지만 생성 - ${reason instanceof Error ? reason.message : "정답 검증 실패"}`);
+            }
+          } else if (choice.includeAnswers) answerComplete = false;
+          else answerComplete = false;
         }
+        const question = await mergePdfs([...questionC1, ...questionRete, ...questionC2]);
+        const answer = answerComplete ? await mergePdfs([...answerC1, ...answerRete, ...answerC2]) : undefined;
         if (outputMode === "separate" && answer) {
-          save(await assemble(cover, question), `${plan.week}_${job.school}클리닉_문제지.pdf`);
-          save(answer, `${plan.week}_${job.school}클리닉_정답지.pdf`);
+          save(await assemble(cover, question), `${plan.week}_${school}클리닉_문제지.pdf`);
+          save(answer, `${plan.week}_${school}클리닉_정답지.pdf`);
         } else {
           const final = await assemble(cover, question, answer);
           const suffix = answer ? "완성본" : "문제지";
-          save(final, `${plan.week}_${job.school}클리닉_${suffix}.pdf`);
+          save(final, `${plan.week}_${school}클리닉_${suffix}.pdf`);
         }
         completed += 1;
-      } catch (reason) { failures.push(`${job.school}: ${reason instanceof Error ? reason.message : "생성 실패"}`); }
+      } catch (reason) { failures.push(`${school}: ${reason instanceof Error ? reason.message : "생성 실패"}`); }
     }
     setBusy(false); setProgress("");
     if (failures.length) setError(`완료 ${completed}개 · 중단 ${failures.length}개\n${failures.join("\n")}`);
@@ -384,23 +416,25 @@ export default function DriveMaker() {
         <label className="weekSelect"><span>주차</span><select value={weekNumber} onChange={(event) => setWeekNumber(event.target.value)}>{Array.from({ length: 12 }, (_, index) => <option value={String(index + 1)} key={index + 1}>{index + 1}주차</option>)}</select></label>
       </div>
       <div className="draftList">{drafts.map((draft, index) => <article className="draftCard" key={draft.id}>
-        <header><strong>{String(index + 1).padStart(2, "0")} 학교 설정</strong>{drafts.length > 1 && <button onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}>삭제</button>}</header>
+        <header><strong>{String(index + 1).padStart(2, "0")} 학교 설정</strong><div><button onClick={() => setDrafts((current) => [...current, { ...emptyDraft(Math.max(0, ...current.map((item) => item.id)) + 1), grade: draft.grade, school: draft.school, customSchool: draft.customSchool }])}>같은 학교 범위 추가</button>{drafts.length > 1 && <button onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}>삭제</button>}</div></header>
         <div className="draftGrid basicFields">
           <label><span>학년</span><select value={draft.grade} onChange={(event) => updateDraft(draft.id, { grade: event.target.value as "1" | "2" })}><option value="1">고1</option><option value="2">고2</option></select></label>
           <label><span>학교</span><select value={draft.school} onChange={(event) => updateDraft(draft.id, { school: event.target.value })}>{schools.map((school) => <option key={school}>{school}</option>)}<option>직접입력</option></select></label>
           {draft.school === "직접입력" && <label><span>학교명</span><input value={draft.customSchool} placeholder="학교 이름" onChange={(event) => updateDraft(draft.id, { customSchool: event.target.value })} /></label>}
-          <label><span>범위 종류</span><select value={draft.sourceType} onChange={(event) => updateDraft(draft.id, { sourceType: event.target.value as SourceType, title: "", publisher: "", lesson: "", year: "", month: "", range: "" })}><option value="textbook">교과서</option><option value="mock">모의고사</option><option value="supplement">부교재</option><option value="custom">직접 입력</option></select></label>
+          <label><span>범위 종류</span><select value={draft.sourceType} onChange={(event) => updateDraft(draft.id, { sourceType: event.target.value as SourceType, title: "", publisher: "", lesson: "", year: "", month: "", range: "", numberMode: "all" })}><option value="textbook">교과서</option><option value="mock">모의고사</option><option value="supplement">부교재</option><option value="custom">직접 입력</option></select></label>
         </div>
         <div className="draftGrid rangeFields">
           {draft.sourceType === "textbook" && <><label><span>교재명</span><input value={draft.title} placeholder="예: 공통영어2" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>출판사·저자</span><input value={draft.publisher} placeholder="예: 능률(오)" onChange={(event) => updateDraft(draft.id, { publisher: event.target.value })} /></label><label><span>과</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 2" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label><span>본문·지문 범위</span><input value={draft.range} placeholder="예: 본문전체 / 1~4번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
           {draft.sourceType === "mock" && <><label><span>연도</span><input value={draft.year} inputMode="numeric" placeholder="예: 24" onChange={(event) => updateDraft(draft.id, { year: event.target.value })} /></label><label><span>시행 월</span><select value={draft.month} onChange={(event) => updateDraft(draft.id, { month: event.target.value })}><option value="">선택</option>{[3, 4, 6, 9, 10, 11].map((month) => <option value={String(month)} key={month}>{month}월</option>)}</select></label><label className="wide"><span>문항 번호</span><input value={draft.range} placeholder="예: 20~24, 29~32" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
           {draft.sourceType === "supplement" && <><label><span>부교재명</span><input value={draft.title} placeholder="예: 마더텅 / 올포" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>강</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 11" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label className="wide"><span>지문 범위</span><input value={draft.range} placeholder="예: 20~40번 / 1~6번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
           {draft.sourceType === "custom" && <label className="full"><span>범위 내용</span><input value={draft.range} placeholder="범위를 구체적으로 입력하세요" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label>}
+          {(draft.sourceType === "mock" || draft.sourceType === "supplement") && <label><span>번호 선택 방식</span><select value={draft.numberMode} onChange={(event) => updateDraft(draft.id, { numberMode: event.target.value as RangeDraft["numberMode"] })}><option value="all">입력 범위 전체</option><option value="even">짝수 번호만</option><option value="odd">홀수 번호만</option></select></label>}
         </div>
         <div className="draftOptions"><label><input type="checkbox" checked={draft.excludeC2} onChange={(event) => updateDraft(draft.id, { excludeC2: event.target.checked })} />영작배열 제외</label><label><input type="checkbox" checked={draft.excludeFurther} onChange={(event) => updateDraft(draft.id, { excludeFurther: event.target.checked })} />Further Reading 제외</label></div>
         <p className="draftPreview"><span>작업표 미리보기</span>{draftScope(draft)}</p>
       </article>)}</div>
-      <div className="builderActions"><button className="addSchool" onClick={() => setDrafts((current) => [...current, emptyDraft(Math.max(0, ...current.map((item) => item.id)) + 1)])}>+ 학교 추가</button><button className="inspectButton" disabled={busy || !connection?.connected || drafts.some((draft) => !draftValid(draft))} onClick={() => void inspect(structuredScope())}>{busy ? "자료 확인 중…" : "선택한 범위로 자료 찾기"}</button></div>
+      <p className="compositeHint">교과서+모의고사, 여러 과처럼 범위가 두 개 이상이면 ‘같은 학교 범위 추가’를 누르세요. 같은 학교의 범위는 하나의 클리닉으로 합쳐집니다.</p>
+      <div className="builderActions"><button className="addSchool" onClick={() => setDrafts((current) => [...current, emptyDraft(Math.max(0, ...current.map((item) => item.id)) + 1)])}>+ 다른 학교 추가</button><button className="inspectButton" disabled={busy || !connection?.connected || drafts.some((draft) => !draftValid(draft))} onClick={() => void inspect(structuredScope())}>{busy ? "자료 확인 중…" : "선택한 범위로 자료 찾기"}</button></div>
     </section>
 
     <details className="adminInventory">
