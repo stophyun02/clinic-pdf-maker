@@ -120,6 +120,64 @@ export async function listDriveFolder(id: string) {
   return output;
 }
 
+const normalizedFolder = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
+
+function schoolFolderKeys(school: string) {
+  const exact = normalizedFolder(school);
+  const relaxed = exact.replace(/여고(?=\d)/g, "").replace(/고(?=\d)/g, "");
+  return [...new Set([exact, relaxed].filter((value) => value.length >= 2))];
+}
+
+async function collectFolderFiles(folderId: string, basePath: string) {
+  const output: DriveFile[] = [];
+  const queue = [{ id: folderId, path: basePath }];
+  while (queue.length) {
+    const folder = queue.shift()!;
+    const items = await listDriveFolder(folder.id);
+    for (const item of items) {
+      const path = `${folder.path}/${item.name}`;
+      if (item.mimeType === "application/vnd.google-apps.folder") queue.push({ id: item.id, path });
+      else output.push({ ...item, path });
+    }
+  }
+  return output;
+}
+
+/**
+ * Finds one school's workbook folder without walking the entire Drive library.
+ * Expected hierarchy: 각인북스_자료 > 담당자(학교) > 학교·학년 > 워크북/정답지.
+ */
+export async function listSchoolWorkbookFiles(school: string) {
+  const settings = config();
+  if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");
+  const keys = schoolFolderKeys(school);
+  const roots = await checkDriveRoots();
+  const materialRoots = roots.filter((root) => {
+    const name = normalizedFolder(root.name);
+    return !name.includes("리테모음") && (name.includes("각인북스") || name.includes("자료"));
+  });
+  const queue = (materialRoots.length ? materialRoots : roots.filter((root) => !normalizedFolder(root.name).includes("리테모음")))
+    .map((root) => ({ id: root.id, path: root.name, depth: 0 }));
+  const matches: { id: string; path: string }[] = [];
+
+  while (queue.length) {
+    const folder = queue.shift()!;
+    const items = await listDriveFolder(folder.id);
+    for (const item of items) {
+      if (item.mimeType !== "application/vnd.google-apps.folder") continue;
+      const path = `${folder.path}/${item.name}`;
+      const name = normalizedFolder(item.name);
+      if (keys.some((key) => name.includes(key))) matches.push({ id: item.id, path });
+      else if (folder.depth < 2) queue.push({ id: item.id, path, depth: folder.depth + 1 });
+    }
+    if (matches.length) break;
+  }
+
+  if (!matches.length) return [];
+  const groups = await Promise.all(matches.map((folder) => collectFolderFiles(folder.id, folder.path)));
+  return groups.flat();
+}
+
 async function driveFetch(path: string, init: RequestInit = {}, base = "https://www.googleapis.com/drive/v3/") {
   const settings = config();
   if (!settings) throw new Error("Google Drive 연결 설정이 아직 완료되지 않았습니다.");

@@ -1,4 +1,4 @@
-import { apiAuthorized, DriveFile, listDriveFiles } from "../../../google-drive";
+import { apiAuthorized, DriveFile, listDriveFiles, listSchoolWorkbookFiles } from "../../../google-drive";
 
 type MaterialRole = "workbook" | "workbookAnswer" | "rete" | "reteAnswer";
 const normalize = (value: string) => value.normalize("NFKC").toLowerCase().replace(/\s+/g, "");
@@ -23,14 +23,15 @@ export async function GET(request: Request) {
     const url = new URL(request.url); const school = url.searchParams.get("school")?.trim() ?? "";
     const workbookId = url.searchParams.get("workbookId")?.trim() ?? ""; const scope = url.searchParams.get("scope")?.trim() ?? "";
     if (!school) return Response.json({ error: "학교와 학년을 먼저 선택해 주세요." }, { status: 400 });
-    const schoolKey = normalize(school); const files = await listDriveFiles({ force: url.searchParams.get("refresh") === "1" });
-    const schoolFiles = files.filter((file) => normalize(file.path).includes(schoolKey));
+    const schoolKey = normalize(school);
+    const schoolFiles = await listSchoolWorkbookFiles(school);
     const workbooks = schoolFiles.filter((file) => role(file) === "workbook" && normalize(file.path).includes("워크북")).map(candidate);
     const workbookAnswers = schoolFiles.filter((file) => role(file) === "workbookAnswer" && (normalize(file.path).includes("정답") || normalize(file.path).includes("워크북"))).map(candidate);
     let rete: ReturnType<typeof candidate>[] = []; let reteAnswers: ReturnType<typeof candidate>[] = [];
     if (workbookId) {
-      const selected = files.find((file) => file.id === workbookId && role(file) === "workbook" && normalize(file.path).includes(schoolKey));
+      const selected = schoolFiles.find((file) => file.id === workbookId && role(file) === "workbook");
       if (!selected) throw new Error("선택한 워크북이 해당 학교 폴더에 없습니다.");
+      const files = await listDriveFiles({ force: url.searchParams.get("refresh") === "1" });
       const tokens = [...new Set([...usefulTokens(selected.name), ...usefulTokens(scope)])];
       const ranked = files.filter((file) => ["rete", "reteAnswer"].includes(role(file) ?? "") && normalize(file.path).includes("리테모음")).map((file) => ({ file, score: tokens.filter((token) => normalize(file.path).includes(token)).length })).filter((item) => item.score > 0).sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
       const bestQuestion = ranked.find((item) => role(item.file) === "rete")?.score ?? 0;

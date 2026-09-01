@@ -75,6 +75,16 @@ test("lets users select a Drive workbook after choosing grade and school", async
   assert.match(materials, /reteAnswers/);
 });
 
+test("uses the school folder hierarchy before scanning the full Drive index", async () => {
+  const drive = await readFile(new URL("app/google-drive.ts", root), "utf8");
+  const materials = await readFile(new URL("app/api/drive/materials/route.ts", root), "utf8");
+  assert.match(drive, /listSchoolWorkbookFiles/);
+  assert.match(drive, /collectFolderFiles/);
+  assert.match(drive, /folder\.depth < 2/);
+  assert.match(materials, /await listSchoolWorkbookFiles\(school\)/);
+  assert.ok(materials.indexOf("await listSchoolWorkbookFiles(school)") < materials.indexOf("await listDriveFiles({ force:"));
+});
+
 test("reuses a persisted Drive index and offers an explicit refresh", async () => {
   const [drive, maker] = await Promise.all([
     readFile(new URL("app/google-drive.ts", root), "utf8"),
