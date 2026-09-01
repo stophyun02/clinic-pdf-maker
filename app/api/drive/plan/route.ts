@@ -68,13 +68,19 @@ function needsContentReview(scope: string) {
 export async function POST(request: Request) {
   if (!apiAuthorized(request)) return Response.json({ error: "로그인이 필요합니다." }, { status: 401 });
   try {
-    const { scope } = await request.json<{ scope?: string }>();
+    const { scope, selectedWorkbooks = [] } = await request.json<{ scope?: string; selectedWorkbooks?: { jobId: number; fileId: string }[] }>();
     const parsed = parseScope(scope ?? "");
     if (!parsed.jobs.length) return Response.json({ error: "학교별 범위를 한 줄씩 입력해 주세요." }, { status: 400 });
     const files = await listDriveFiles();
     const storedCovers = await listStoredCovers();
     const jobs = parsed.jobs.map((row) => {
       const materials = Object.fromEntries(roles.map((role) => [role, best(files, role, row.school, row.scope)])) as Record<Role, Candidate[]>;
+      const preferred = selectedWorkbooks.find((selection) => selection.jobId === row.id)?.fileId;
+      if (preferred) {
+        const selected = files.find((file) => file.id === preferred && classify(file) === "workbook" && normalize(file.path).includes(normalize(row.school)));
+        if (!selected) throw new Error(`${row.school}: 선택한 교과서 파일이 현재 학교 자료실과 일치하지 않습니다.`);
+        materials.workbook = [{ id: selected.id, name: selected.name, path: selected.path, size: selected.size, modifiedTime: selected.modifiedTime }];
+      }
       const savedForSchool = storedCovers.filter((cover) => normalize(cover.filename).includes(normalize(row.school))).map((cover) => ({
         id: `cover:${cover.id}`, name: cover.filename, path: "사이트 표지 자료실", size: String(cover.size), modifiedTime: cover.created_at,
       }));

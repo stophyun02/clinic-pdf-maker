@@ -57,3 +57,17 @@ test("wires the four advanced safety engines into the unified workflow", async (
   assert.match(engine, /\/api\/ocr/);
   assert.match(ocr, /DOCUMENT_TEXT_DETECTION/);
 });
+
+test("lets users select a Drive workbook after choosing grade and school", async () => {
+  const [maker, planner, materials] = await Promise.all([
+    readFile(new URL("app/drive-maker.tsx", root), "utf8"),
+    readFile(new URL("app/api/drive/plan/route.ts", root), "utf8"),
+    readFile(new URL("app/api/drive/materials/route.ts", root), "utf8"),
+  ]);
+  assert.match(maker, /학년·학교로 찾기/);
+  assert.match(maker, /selectedWorkbookId/);
+  assert.match(maker, /selectedWorkbooks/);
+  assert.match(planner, /선택한 교과서 파일이 현재 학교 자료실과 일치하지 않습니다/);
+  assert.match(materials, /path\.includes\(schoolKey\)/);
+  assert.match(materials, /!answer/);
+});

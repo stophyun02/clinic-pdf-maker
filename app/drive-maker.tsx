@@ -33,6 +33,7 @@ type RangeDraft = {
   id: number; grade: "1" | "2"; school: string; customSchool: string; sourceType: SourceType;
   title: string; publisher: string; lesson: string; year: string; month: string; range: string;
   numberMode: "all" | "even" | "odd";
+  selectedWorkbookId: string; selectedWorkbookName: string;
   excludeC2: boolean; excludeFurther: boolean;
 };
 
@@ -45,7 +46,7 @@ const statusMeta: Record<Status, { label: string; description: string }> = {
   ambiguous: { label: "후보 확인", description: "동일 조건의 파일이 여러 개입니다." },
 };
 const schools = ["강동고", "한영고", "배재고", "성덕고", "상일여고", "명일여고", "이대부고", "서울여고", "광성고"];
-const emptyDraft = (id: number): RangeDraft => ({ id, grade: "1", school: "강동고", customSchool: "", sourceType: "textbook", title: "", publisher: "", lesson: "", year: "", month: "", range: "", numberMode: "all", excludeC2: false, excludeFurther: false });
+const emptyDraft = (id: number): RangeDraft => ({ id, grade: "1", school: "강동고", customSchool: "", sourceType: "textbook", title: "", publisher: "", lesson: "", year: "", month: "", range: "", numberMode: "all", selectedWorkbookId: "", selectedWorkbookName: "", excludeC2: false, excludeFurther: false });
 
 function inventoryRole(name: string): { role: InventoryRole; reason: string } {
   const value = name.normalize("NFKC").toLowerCase();
@@ -140,6 +141,8 @@ export default function DriveMaker() {
   const [outputMode, setOutputMode] = useState<"combined" | "separate">("combined");
   const [weekNumber, setWeekNumber] = useState("2");
   const [drafts, setDrafts] = useState<RangeDraft[]>([emptyDraft(1)]);
+  const [workbookOptions, setWorkbookOptions] = useState<Record<number, Candidate[]>>({});
+  const [workbookSearch, setWorkbookSearch] = useState<Record<number, string>>({});
   const localFileMap = useMemo(() => new Map(localUploads.map((file, index) => [`local:${index}`, file])), [localUploads]);
   const visibleJobs = useMemo(() => plan?.jobs.filter((job) => filter === "all" || job.status === filter) ?? [], [plan, filter]);
   const selectedCandidate = (job: Job, role: Role) => {
@@ -189,6 +192,18 @@ export default function DriveMaker() {
     setDrafts((current) => current.map((draft) => draft.id === id ? { ...draft, ...patch } : draft));
   }
 
+  async function findSchoolWorkbooks(draft: RangeDraft) {
+    const school = `${draft.school === "직접입력" ? draft.customSchool.trim() : draft.school}${draft.grade}`;
+    setWorkbookSearch((current) => ({ ...current, [draft.id]: "Drive에서 찾는 중…" }));
+    try {
+      const payload = await apiJson<{ workbooks: Candidate[] }>(`/api/drive/materials?school=${encodeURIComponent(school)}`);
+      setWorkbookOptions((current) => ({ ...current, [draft.id]: payload.workbooks }));
+      if (payload.workbooks.length === 1) updateDraft(draft.id, { selectedWorkbookId: payload.workbooks[0].id, selectedWorkbookName: payload.workbooks[0].name, title: "", publisher: "" });
+      else updateDraft(draft.id, { selectedWorkbookId: "", selectedWorkbookName: "" });
+      setWorkbookSearch((current) => ({ ...current, [draft.id]: payload.workbooks.length ? `${payload.workbooks.length}개 발견` : "해당 학교의 교과서 워크북이 없습니다." }));
+    } catch (reason) { setWorkbookSearch((current) => ({ ...current, [draft.id]: reason instanceof Error ? reason.message : "자료 검색 실패" })); }
+  }
+
   function draftScope(draft: RangeDraft) {
     const school = `${draft.school === "직접입력" ? draft.customSchool.trim() : draft.school}${draft.grade}`;
     let detail = draft.range.trim();
@@ -205,7 +220,7 @@ export default function DriveMaker() {
 
   function draftValid(draft: RangeDraft) {
     if (draft.school === "직접입력" && !draft.customSchool.trim()) return false;
-    if (draft.sourceType === "textbook") return Boolean(draft.title.trim() && draft.lesson.trim());
+    if (draft.sourceType === "textbook") return Boolean((draft.selectedWorkbookId || draft.title.trim()) && draft.lesson.trim());
     if (draft.sourceType === "mock") return Boolean(draft.year.trim() && draft.month.trim() && draft.range.trim());
     if (draft.sourceType === "supplement") return Boolean(draft.title.trim() && draft.lesson.trim() && draft.range.trim());
     return Boolean(draft.range.trim());
@@ -301,7 +316,8 @@ export default function DriveMaker() {
     setBusy(true); setError(""); setMessage(""); setPlan(null); setConfirmed(false); setFilter("all");
     setProgress("Drive 자료를 학교별로 분류하고 있습니다…");
     try {
-      const payload = await apiJson<Plan>("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: requestedScope }) });
+      const selectedWorkbooks = drafts.map((draft, index) => ({ jobId: index + 1, fileId: draft.selectedWorkbookId })).filter((selection) => selection.fileId);
+      const payload = await apiJson<Plan>("/api/drive/plan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scope: requestedScope, selectedWorkbooks }) });
       const merged = mergeLocalFiles(payload);
       setPlan(merged);
       setChoices(defaultChoices(merged));
@@ -449,13 +465,13 @@ export default function DriveMaker() {
       <div className="draftList">{drafts.map((draft, index) => <article className="draftCard" key={draft.id}>
         <header><strong>{String(index + 1).padStart(2, "0")} 학교 설정</strong><div><button onClick={() => setDrafts((current) => [...current, { ...emptyDraft(Math.max(0, ...current.map((item) => item.id)) + 1), grade: draft.grade, school: draft.school, customSchool: draft.customSchool }])}>같은 학교 범위 추가</button>{drafts.length > 1 && <button onClick={() => setDrafts((current) => current.filter((item) => item.id !== draft.id))}>삭제</button>}</div></header>
         <div className="draftGrid basicFields">
-          <label><span>학년</span><select value={draft.grade} onChange={(event) => updateDraft(draft.id, { grade: event.target.value as "1" | "2" })}><option value="1">고1</option><option value="2">고2</option></select></label>
-          <label><span>학교</span><select value={draft.school} onChange={(event) => updateDraft(draft.id, { school: event.target.value })}>{schools.map((school) => <option key={school}>{school}</option>)}<option>직접입력</option></select></label>
+          <label><span>학년</span><select value={draft.grade} onChange={(event) => { updateDraft(draft.id, { grade: event.target.value as "1" | "2", selectedWorkbookId: "", selectedWorkbookName: "" }); setWorkbookOptions((current) => ({ ...current, [draft.id]: [] })); }}><option value="1">고1</option><option value="2">고2</option></select></label>
+          <label><span>학교</span><select value={draft.school} onChange={(event) => { updateDraft(draft.id, { school: event.target.value, selectedWorkbookId: "", selectedWorkbookName: "" }); setWorkbookOptions((current) => ({ ...current, [draft.id]: [] })); }}>{schools.map((school) => <option key={school}>{school}</option>)}<option>직접입력</option></select></label>
           {draft.school === "직접입력" && <label><span>학교명</span><input value={draft.customSchool} placeholder="학교 이름" onChange={(event) => updateDraft(draft.id, { customSchool: event.target.value })} /></label>}
-          <label><span>범위 종류</span><select value={draft.sourceType} onChange={(event) => updateDraft(draft.id, { sourceType: event.target.value as SourceType, title: "", publisher: "", lesson: "", year: "", month: "", range: "", numberMode: "all" })}><option value="textbook">교과서</option><option value="mock">모의고사</option><option value="supplement">부교재</option><option value="custom">직접 입력</option></select></label>
+          <label><span>범위 종류</span><select value={draft.sourceType} onChange={(event) => updateDraft(draft.id, { sourceType: event.target.value as SourceType, title: "", publisher: "", lesson: "", year: "", month: "", range: "", numberMode: "all", selectedWorkbookId: "", selectedWorkbookName: "" })}><option value="textbook">교과서</option><option value="mock">모의고사</option><option value="supplement">부교재</option><option value="custom">직접 입력</option></select></label>
         </div>
         <div className="draftGrid rangeFields">
-          {draft.sourceType === "textbook" && <><label><span>교재명</span><input value={draft.title} placeholder="예: 공통영어2" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>출판사·저자</span><input value={draft.publisher} placeholder="예: 능률(오)" onChange={(event) => updateDraft(draft.id, { publisher: event.target.value })} /></label><label><span>과</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 2" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label><span>본문·지문 범위</span><input value={draft.range} placeholder="예: 본문전체 / 1~4번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
+          {draft.sourceType === "textbook" && <><div className="driveBookPicker"><span>Drive 교과서 파일</span><button type="button" onClick={() => void findSchoolWorkbooks(draft)}>학년·학교로 찾기</button><select value={draft.selectedWorkbookId} onChange={(event) => { const candidate = (workbookOptions[draft.id] ?? []).find((item) => item.id === event.target.value); updateDraft(draft.id, { selectedWorkbookId: event.target.value, selectedWorkbookName: candidate?.name ?? "", title: "", publisher: "" }); }}><option value="">{workbookSearch[draft.id] || "먼저 Drive에서 찾아주세요"}</option>{(workbookOptions[draft.id] ?? []).map((candidate) => <option value={candidate.id} key={candidate.id}>{candidate.name}</option>)}</select>{draft.selectedWorkbookName && <small>선택됨: {draft.selectedWorkbookName}</small>}</div><label><span>교재명 (선택)</span><input value={draft.title} disabled={Boolean(draft.selectedWorkbookId)} placeholder="파일을 못 찾을 때만 입력" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>출판사·저자 (선택)</span><input value={draft.publisher} disabled={Boolean(draft.selectedWorkbookId)} placeholder="파일을 못 찾을 때만 입력" onChange={(event) => updateDraft(draft.id, { publisher: event.target.value })} /></label><label><span>과</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 2" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label><span>본문·지문 범위</span><input value={draft.range} placeholder="예: 본문전체 / 1~4번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
           {draft.sourceType === "mock" && <><label><span>연도</span><input value={draft.year} inputMode="numeric" placeholder="예: 24" onChange={(event) => updateDraft(draft.id, { year: event.target.value })} /></label><label><span>시행 월</span><select value={draft.month} onChange={(event) => updateDraft(draft.id, { month: event.target.value })}><option value="">선택</option>{[3, 4, 6, 9, 10, 11].map((month) => <option value={String(month)} key={month}>{month}월</option>)}</select></label><label className="wide"><span>문항 번호</span><input value={draft.range} placeholder="예: 20~24, 29~32" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
           {draft.sourceType === "supplement" && <><label><span>부교재명</span><input value={draft.title} placeholder="예: 마더텅 / 올포" onChange={(event) => updateDraft(draft.id, { title: event.target.value })} /></label><label><span>강</span><input value={draft.lesson} inputMode="numeric" placeholder="예: 11" onChange={(event) => updateDraft(draft.id, { lesson: event.target.value })} /></label><label className="wide"><span>지문 범위</span><input value={draft.range} placeholder="예: 20~40번 / 1~6번 지문" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label></>}
           {draft.sourceType === "custom" && <label className="full"><span>범위 내용</span><input value={draft.range} placeholder="범위를 구체적으로 입력하세요" onChange={(event) => updateDraft(draft.id, { range: event.target.value })} /></label>}
