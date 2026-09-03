@@ -92,6 +92,7 @@ test("reuses a persisted Drive index and offers an explicit refresh", async () =
   ]);
   assert.match(drive, /DRIVE_INDEX_TTL/);
   assert.match(drive, /storedDriveIndex/);
+  assert.doesNotMatch(drive, /Date\.now\(\) - updatedAt > DRIVE_INDEX_TTL/);
   assert.match(drive, /fileLoadPromise/);
   assert.match(maker, /빠르게 찾기/);
   assert.match(maker, /최신 목록 새로고침/);

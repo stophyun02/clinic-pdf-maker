@@ -192,8 +192,6 @@ async function storedDriveIndex() {
   if (!bucket) return null;
   const object = await bucket.get(DRIVE_INDEX_KEY);
   if (!object) return null;
-  const updatedAt = Number(object.customMetadata?.updatedAt ?? 0);
-  if (!updatedAt || Date.now() - updatedAt > DRIVE_INDEX_TTL) return null;
   return JSON.parse(await object.text()) as DriveFile[];
 }
 
