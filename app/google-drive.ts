@@ -187,6 +187,21 @@ async function driveFetch(path: string, init: RequestInit = {}, base = "https://
   return fetch(`${base}${path}`, { ...init, headers });
 }
 
+export async function searchDriveFiles(terms: string[]) {
+  const clean = [...new Set(terms.map((term) => term.trim()).filter((term) => term.length >= 2))].slice(0, 8);
+  if (!clean.length) return [];
+  const escaped = clean.map((term) => term.replace(/\\/g, "\\\\").replace(/'/g, "\\'"));
+  const params = new URLSearchParams({
+    q: `trashed=false and mimeType!='application/vnd.google-apps.folder' and (${escaped.map((term) => `name contains '${term}'`).join(" or ")})`,
+    fields: "nextPageToken,files(id,name,mimeType,parents,size,modifiedTime)",
+    pageSize: "1000", supportsAllDrives: "true", includeItemsFromAllDrives: "true",
+  });
+  const response = await driveFetch(`files?${params}`);
+  if (!response.ok) throw new Error("Drive에서 선택 범위 자료를 검색하지 못했습니다.");
+  const payload = await response.json<{ files: Omit<DriveFile, "path">[] }>();
+  return payload.files.map((file) => ({ ...file, path: file.name }));
+}
+
 async function storedDriveIndex() {
   const bucket = (env as unknown as { RETE_FILES?: R2Bucket }).RETE_FILES;
   if (!bucket) return null;

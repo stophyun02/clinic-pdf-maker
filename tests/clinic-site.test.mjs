@@ -85,6 +85,14 @@ test("uses the school folder hierarchy before scanning the full Drive index", as
   assert.ok(materials.indexOf("await listSchoolWorkbookFiles(school)") < materials.indexOf("await listDriveFiles({ force:"));
 });
 
+test("plans a weekly batch with targeted Drive name searches", async () => {
+  const drive = await readFile(new URL("app/google-drive.ts", root), "utf8");
+  const planner = await readFile(new URL("app/api/drive/plan/route.ts", root), "utf8");
+  assert.match(drive, /searchDriveFiles/);
+  assert.match(planner, /Promise\.all\(parsed\.jobs\.map/);
+  assert.doesNotMatch(planner, /await listDriveFiles\(\)/);
+});
+
 test("reuses a persisted Drive index and offers an explicit refresh", async () => {
   const [drive, maker] = await Promise.all([
     readFile(new URL("app/google-drive.ts", root), "utf8"),

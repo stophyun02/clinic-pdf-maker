@@ -1,4 +1,4 @@
-import { apiAuthorized, DriveFile, listDriveFiles } from "../../../google-drive";
+import { apiAuthorized, DriveFile, searchDriveFiles } from "../../../google-drive";
 import { listStoredCovers } from "../../../cover-library";
 
 type Role = "workbook" | "workbookAnswer" | "rete" | "reteAnswer" | "cover";
@@ -56,10 +56,18 @@ function score(file: DriveFile, school: string, scope: string) {
 }
 
 function best(files: DriveFile[], role: Role, school: string, scope: string): Candidate[] {
-  const ranked = files.filter((file) => classify(file) === role).map((file) => ({ file, score: score(file, school, scope) })).filter((item) => item.score >= 100).sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
+  const schoolBound = role === "workbook" || role === "workbookAnswer";
+  const ranked = files.filter((file) => classify(file) === role).map((file) => ({ file, score: score(file, school, scope) })).filter((item) => schoolBound ? item.score >= 100 : item.score > 0).sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
   if (!ranked.length) return [];
   const top = ranked[0].score;
   return ranked.filter((item) => item.score === top).map(({ file }) => ({ id: file.id, name: file.name, path: file.path, size: file.size, modifiedTime: file.modifiedTime }));
+}
+
+function searchTerms(school: string, scope: string) {
+  const relaxed = school.replace(/여고(?=\d)/g, "").replace(/고(?=\d)/g, "");
+  const dates = [...scope.matchAll(/(\d{2})\s*년\s*(\d{1,2})\s*월/g)].flatMap((match) => [`${match[1]}년`, `${match[2]}월`, `${match[1]}년${match[2]}월`]);
+  const named = scope.match(/워크북\s*\d+|마더텅|올포|올림포스|YBM/gi) ?? [];
+  return [school, relaxed, ...dates, ...named];
 }
 
 function needsContentReview(scope: string) {
@@ -72,14 +80,16 @@ export async function POST(request: Request) {
     const { scope, selectedMaterials = [] } = await request.json<{ scope?: string; selectedMaterials?: { jobId: number; role: Role; fileId: string }[] }>();
     const parsed = parseScope(scope ?? "");
     if (!parsed.jobs.length) return Response.json({ error: "학교별 범위를 한 줄씩 입력해 주세요." }, { status: 400 });
-    const files = await listDriveFiles();
     const storedCovers = await listStoredCovers();
-    const jobs = parsed.jobs.map((row) => {
+    const filesByJob = await Promise.all(parsed.jobs.map((row) => searchDriveFiles(searchTerms(row.school, row.scope))));
+    const allFound = [...new Map(filesByJob.flat().map((file) => [file.id, file])).values()];
+    const jobs = parsed.jobs.map((row, jobIndex) => {
+      const files = filesByJob[jobIndex];
       const materials = Object.fromEntries(roles.map((role) => [role, best(files, role, row.school, row.scope)])) as Record<Role, Candidate[]>;
       for (const selection of selectedMaterials.filter((item) => item.jobId === row.id)) {
         const selected = files.find((file) => file.id === selection.fileId && classify(file) === selection.role);
         const schoolRole = selection.role === "workbook" || selection.role === "workbookAnswer";
-        const correctPath = selected && (schoolRole ? normalize(selected.path).includes(normalize(row.school)) : normalize(selected.path).includes("리테모음"));
+        const correctPath = selected && (schoolRole ? score(selected, row.school, row.scope) >= 100 : classify(selected) === selection.role);
         if (!selected || !correctPath) throw new Error(`${row.school}: 선택한 ${roleName[selection.role]} 파일이 지정된 자료실 경로와 일치하지 않습니다.`);
         materials[selection.role] = [{ id: selected.id, name: selected.name, path: selected.path, size: selected.size, modifiedTime: selected.modifiedTime }];
       }
@@ -111,7 +121,7 @@ export async function POST(request: Request) {
       return { ...row, status, materials, missing, ambiguous, checks, note };
     });
     const counts = Object.fromEntries(["ready", "questionReady", "review", "missing", "ambiguous"].map((status) => [status, jobs.filter((job) => job.status === status).length]));
-    return Response.json({ scannedAt: new Date().toISOString(), fileCount: files.length, week: parsed.week, counts, jobs });
+    return Response.json({ scannedAt: new Date().toISOString(), fileCount: allFound.length, week: parsed.week, counts, jobs });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : "자료 검색 실패" }, { status: 500 });
   }
